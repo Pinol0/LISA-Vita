@@ -1,0 +1,2647 @@
+diff --git a/shader/bicubic.frag b/shader/bicubic.frag
+index a7f7d32..46671c6 100644
+--- a/shader/bicubic.frag
++++ b/shader/bicubic.frag
+@@ -16,9 +16,9 @@ uniform vec2 bc;
+ void main()
+ {
+ 	vec2 pixel = v_texCoord * sourceSize + 0.5;
+-	vec2 frac = fract(pixel);
+-	vec2 frac2 = frac * frac;
+-	vec2 frac3 = frac * frac2;
++	vec2 fracPart = fract(pixel);
++	vec2 frac2 = fracPart * fracPart;
++	vec2 frac3 = fracPart * frac2;
+ 	vec2 onePixel = texSizeInv;
+ 	pixel = floor(pixel) * texSizeInv - onePixel / 2.0;
+ 	vec4 colours[4];
+@@ -33,13 +33,13 @@ void main()
+ 				+ (1.5 * bc.x + bc.y - 2.0) * p2 + (bc.x / 6.0 + bc.y) * p3) * frac3.x
+ 				+ ((0.5 * bc.x + 2.0 * bc.y) * p0 + (2.0 * bc.x + bc.y - 3.0) * p1
+ 				+ (-2.5 * bc.x - 2.0 * bc.y + 3.0) * p2 - bc.y * p3) * frac2.x
+-				+ ((-0.5 * bc.x - bc.y) * p0 + (0.5 * bc.x + bc.y) * p2) * frac.x
++				+ ((-0.5 * bc.x - bc.y) * p0 + (0.5 * bc.x + bc.y) * p2) * fracPart.x
+ 				+ p0 * bc.x / 6.0 + (-bc.x / 3.0 + 1.0) * p1 + p2 * bc.x / 6.0;
+ 	}
+ 	gl_FragColor = ((-bc.x / 6.0 - bc . y) * colours[0] + (- 1.5 * bc.x - bc.y + 2.0) * colours[1]
+ 			+ (1.5 * bc.x + bc.y - 2.0) * colours[2] + (bc.x / 6.0 + bc.y) * colours[3]) * frac3.y
+ 			+ ((0.5 * bc.x + 2.0 * bc.y) * colours[0] + (2.0 * bc.x + bc.y - 3.0) * colours[1]
+ 			+ (-2.5 * bc.x - 2.0 * bc.y + 3.0) * colours[2] - bc.y * colours[3]) * frac2.y
+-			+ ((-0.5 * bc.x - bc.y) * colours[0] + (0.5 * bc.x + bc.y) * colours[2]) * frac.y
++			+ ((-0.5 * bc.x - bc.y) * colours[0] + (0.5 * bc.x + bc.y) * colours[2]) * fracPart.y
+ 			+ colours[0] * bc.x / 6.0 + (-bc.x / 3.0 + 1.0) * colours[1] + colours[2] * bc.x / 6.0;
+ }
+diff --git a/shader/lanczos3.frag b/shader/lanczos3.frag
+index 5e167c8..77ad8a9 100644
+--- a/shader/lanczos3.frag
++++ b/shader/lanczos3.frag
+@@ -22,7 +22,7 @@ float lanczos3(float x)
+ void main()
+ {
+ 	vec2 pixel = v_texCoord * sourceSize + 0.5;
+-	vec2 frac = fract(pixel);
++	vec2 fracPart = fract(pixel);
+ 	vec2 onePixel = texSizeInv;
+ 	pixel = floor(pixel) * texSizeInv - onePixel / 2.0;
+ 
+@@ -30,7 +30,7 @@ void main()
+ 	float sum = 0.0;
+ 	for(int x = 0; x < 6; x++)
+ 	{
+-		lanczosX[x] = lanczos3(float(x) - 2.0 - frac.x);
++		lanczosX[x] = lanczos3(float(x) - 2.0 - fracPart.x);
+ 		sum += lanczosX[x];
+ 	}
+ 	for(int x = 0; x < 6; x++) lanczosX[x] /= sum;
+@@ -38,7 +38,7 @@ void main()
+ 	float lanczosY[6];
+ 	for(int y = 0; y < 6; y++)
+ 	{
+-		lanczosY[y] = lanczos3(float(y) - 2.0 - frac.y);
++		lanczosY[y] = lanczos3(float(y) - 2.0 - fracPart.y);
+ 		sum += lanczosY[y];
+ 	}
+ 	for(int y = 0; y < 6; y++) lanczosY[y] /= sum;
+diff --git a/shader/tilemap.vert b/shader/tilemap.vert
+index 1a88a5e..57a8c85 100644
+--- a/shader/tilemap.vert
++++ b/shader/tilemap.vert
+@@ -28,11 +28,12 @@ void main()
+     lowp int atIndex = int(tex.y / autotileH);
+ 
+     lowp int pred = int(tex.x <= atAreaW && tex.y <= atAreaH);
+-    lowp int frame = int(aniIndex - atFrames[atIndex] * (aniIndex / atFrames[atIndex]));
+-    lowp int row = frame / 8;
+-    lowp int col = frame - 8 * row;
++    float atDivisor = float(atFrames[atIndex]);
++    lowp int frame = int(float(aniIndex) - atDivisor * floor((float(aniIndex) + 0.5) / atDivisor));
++    lowp int tileRow = frame / 8;
++    lowp int col = frame - 8 * tileRow;
+     tex.x += atAniOffsetX * float(col * pred);
+-    tex.y += atAniOffsetY * float(row * pred);
++    tex.y += atAniOffsetY * float(tileRow * pred);
+ 
+     gl_Position = projMat * vec4(position + translation, 0, 1);
+ 
+diff --git a/src/audio/alstream.cpp b/src/audio/alstream.cpp
+index a37ea71..a058bcc 100644
+--- a/src/audio/alstream.cpp
++++ b/src/audio/alstream.cpp
+@@ -22,12 +22,16 @@
+ #include "alstream.h"
+ 
+ #include "sharedstate.h"
++#ifndef MKXP_VITA_AUDIO
+ #include "sharedmidistate.h"
++#endif
+ #include "eventthread.h"
+ #include "filesystem.h"
+ #include "exception.h"
+ #include "aldatasource.h"
++#ifndef MKXP_VITA_AUDIO
+ #include "fluid-fun.h"
++#endif
+ #include "sdl-util.h"
+ #include "debugwriter.h"
+ 
+@@ -216,6 +220,11 @@ struct ALStreamOpenHandler : FileSystem::OpenHandler
+ 
+ 			if (!strcmp(sig, "MThd"))
+ 			{
++#ifdef MKXP_VITA_AUDIO
++				/* Vita: no fluidsynth; say so instead of failing inside a decoder. */
++				SDL_RWclose(&ops);
++				throw Exception(Exception::MKXPError, "MIDI playback is not supported on Vita");
++#else
+ 				shState->midiState().initIfNeeded(shState->config());
+ 
+ 				if (HAVE_FLUID)
+@@ -223,6 +232,7 @@ struct ALStreamOpenHandler : FileSystem::OpenHandler
+ 					source = createMidiSource(ops, looped);
+ 					return true;
+ 				}
++#endif
+ 			}
+ 
+ 			source = createSDLSource(ops, ext, STREAM_BUF_SIZE, looped);
+diff --git a/src/audio/audio.cpp b/src/audio/audio.cpp
+index eaf4cc6..6577e47 100644
+--- a/src/audio/audio.cpp
++++ b/src/audio/audio.cpp
+@@ -24,10 +24,13 @@
+ #include "audiostream.h"
+ #include "soundemitter.h"
+ #include "sharedstate.h"
++#ifndef MKXP_VITA_AUDIO
+ #include "sharedmidistate.h"
++#endif
+ #include "eventthread.h"
+ #include "sdl-util.h"
+ #include "exception.h"
++#include "debugwriter.h"
+ 
+ #include <string>
+ #include <vector>
+@@ -404,7 +407,11 @@ void Audio::seStop()
+ 
+ void Audio::setupMidi()
+ {
++#ifdef MKXP_VITA_AUDIO
++	Debug() << "[vita] Audio.setup_midi: MIDI is not supported on Vita";
++#else
+ 	shState->midiState().initIfNeeded(shState->config());
++#endif
+ }
+ 
+ double Audio::bgmPos(int track)
+diff --git a/src/audio/audio.h b/src/audio/audio.h
+index b7d565a..eba6a12 100644
+--- a/src/audio/audio.h
++++ b/src/audio/audio.h
+@@ -74,6 +74,12 @@ public:
+ 
+ private:
+ 	Audio(RGSSThreadData &rtData);
++#ifdef MKXP_VITA_AUDIO
++public:
++	/* Vita: SharedState (sharedstate_test.cpp) is not SharedStatePrivate. */
++	static Audio *vitaCreate(RGSSThreadData &rtData) { return new Audio(rtData); }
++private:
++#endif
+ 	~Audio();
+ 
+ 	friend struct SharedStatePrivate;
+diff --git a/src/audio/soundemitter.cpp b/src/audio/soundemitter.cpp
+index 9808809..02fa27f 100644
+--- a/src/audio/soundemitter.cpp
++++ b/src/audio/soundemitter.cpp
+@@ -28,9 +28,26 @@
+ #include "util.h"
+ #include "debugwriter.h"
+ 
++#ifdef MKXP_VITA_AUDIO
++#include <vector>
++/* vita-audio-backend.cpp: whole-file Ogg Vorbis / WAV decode (no SDL_sound on the Vita). */
++bool vitaDecodeAudioAll(SDL_RWops &ops, const char *ext, std::vector<uint8_t> &data,
++                        int &sampleSize, int &channels, int &rate, std::string &err);
++static std::string vitaSoundError;
++#ifdef MKXP_VITA_ANIM_PREDECODE
++#include "vita-predecode.h"
++#endif
++#else
+ #include <SDL_sound.h>
++#endif
+ 
++#ifdef MKXP_VITA_SE_CACHE_MB
++/* Vita memory budget (MKXP_VITA_SE_CACHE_MB): the decoded SE buffers live in OpenAL's allocations on
++ * the newlib heap, which also holds Ruby; upstream's 10 MiB left too little margin at battle peaks. */
++#define SE_CACHE_MEM (MKXP_VITA_SE_CACHE_MB*1024*1024)
++#else
+ #define SE_CACHE_MEM (10*1024*1024) // 10 MB
++#endif
+ 
+ struct SoundBuffer
+ {
+@@ -194,6 +211,17 @@ struct SoundOpenHandler : FileSystem::OpenHandler
+ 
+ 	bool tryRead(SDL_RWops &ops, const char *ext)
+ 	{
++#ifdef MKXP_VITA_AUDIO
++		std::vector<uint8_t> pcm;
++		int sampleSize = 0, channels = 0, rate = 0;
++		if (!vitaDecodeAudioAll(ops, ext, pcm, sampleSize, channels, rate, vitaSoundError))
++			return false;
++		buffer = new SoundBuffer;
++		buffer->bytes = (uint32_t)pcm.size();
++		AL::Buffer::uploadData(buffer->alBuffer, chooseALFormat(sampleSize, channels), pcm.data(),
++		                       buffer->bytes, rate);
++		return true;
++#else
+ 		Sound_Sample *sample = Sound_NewSample(&ops, ext, 0, STREAM_BUF_SIZE);
+ 
+ 		if (!sample)
+@@ -219,6 +247,7 @@ struct SoundOpenHandler : FileSystem::OpenHandler
+ 		Sound_FreeSample(sample);
+ 
+ 		return true;
++#endif
+ 	}
+ };
+ 
+@@ -238,15 +267,35 @@ SoundBuffer *SoundEmitter::allocateBuffer(const std::string &filename)
+ 	else
+ 	{
+ 		/* Buffer not in cache, needs to be loaded */
++#ifdef MKXP_VITA_ANIM_PREDECODE
++		/* Decoded ahead by vita-predecode.cpp (same candidates and decoder as below): upload as
++		 * SoundOpenHandler::tryRead does. */
++		std::vector<uint8_t> vitaPcm;
++		int vitaSs = 0, vitaCh = 0, vitaRate = 0;
++		if (vitaPredecodeTakeSound(filename, vitaPcm, vitaSs, vitaCh, vitaRate))
++		{
++			buffer = new SoundBuffer;
++			buffer->bytes = (uint32_t)vitaPcm.size();
++			AL::Buffer::uploadData(buffer->alBuffer, chooseALFormat(vitaSs, vitaCh), vitaPcm.data(),
++			                       buffer->bytes, vitaRate);
++		}
++		else
++#endif
++		{
+ 		SoundOpenHandler handler;
+ 		shState->fileSystem().openRead(handler, filename.c_str());
+ 		buffer = handler.buffer;
++		}
+ 
+ 		if (!buffer)
+ 		{
+ 			char buf[512];
+ 			snprintf(buf, sizeof(buf), "Unable to decode sound: %s: %s",
++#ifdef MKXP_VITA_AUDIO
++			         filename.c_str(), vitaSoundError.c_str());
++#else
+ 			         filename.c_str(), Sound_GetError());
++#endif
+ 			Debug() << buf;
+ 
+ 			return 0;
+diff --git a/src/display/bitmap.h b/src/display/bitmap.h
+index 4599ffb..69df72d 100644
+--- a/src/display/bitmap.h
++++ b/src/display/bitmap.h
+@@ -106,6 +106,32 @@ public:
+ 	Bitmap(TEXFBO &other);
+ 	Bitmap(SDL_Surface *imgSurf, SDL_Surface *imgSurfHires, bool forceMega = false);
+ 
++#ifdef MKXP_VITA_MINIMAL_TEST
++    void vitaDrawText(
++        int x,
++        int y,
++        int w,
++        int h,
++        const char *text,
++        int align,
++        int fontSize
++    );
++    /* Vita: RGSS3 draw_text with the full Font state (vita-font.cpp). False: no TTF available,
++     * the caller falls back to vitaDrawText (fixed 24 px atlas). */
++    bool vitaDrawTextFont(
++        int x, int y, int w, int h,
++        const char *text,
++        int align,
++        const struct VitaFontSpec &spec,
++        struct VitaTextInfo *info
++    );
++    /* Vita diagnostics: FNV-1a of a clipped region of the CPU pixel copy (0 if none). */
++    unsigned int vitaRegionHash(int x, int y, int w, int h) const;
++    /* Vita diagnostics (MKXP_VITA_DEBUG_TILESET): ptr/tex/size/source, optional texture check. */
++    void vitaDiagDescribe(char *buf, int cap, bool verifyTex) const;
++    /* Vita (MKXP_VITA_SCREEN_FX): replace the pixels with an RGBA8 image of the same size (snap). */
++    void vitaSetPixelsRGBA(const unsigned char *rgba, int strideBytes);
++#endif
+ 	/* Clone constructor */
+     
+     // frame is -2 for "any and all", -1 for "current", anything else for a specific frame
+diff --git a/src/display/gl/gl-fun.h b/src/display/gl/gl-fun.h
+index 634da66..9b096f8 100644
+--- a/src/display/gl/gl-fun.h
++++ b/src/display/gl/gl-fun.h
+@@ -22,11 +22,26 @@
+ #ifndef GLFUN_H
+ #define GLFUN_H
+ 
+-#ifdef GLES2_HEADER
++#ifdef __vita__
++#include <vitaGL.h>
++
++#ifndef APIENTRY
++#define APIENTRY
++#endif
++
++#ifndef APIENTRYP
++#define APIENTRYP *
++#endif
++
++#elif defined(GLES2_HEADER)
++
+ #include <SDL_opengles2.h>
+ #define APIENTRYP GL_APIENTRYP
++
+ #else
++
+ #include <SDL_opengl.h>
++
+ #endif
+ 
+ /* Etc */
+diff --git a/src/display/gl/gl-meta.cpp b/src/display/gl/gl-meta.cpp
+index 22f4fa5..1757d88 100644
+--- a/src/display/gl/gl-meta.cpp
++++ b/src/display/gl/gl-meta.cpp
+@@ -138,7 +138,13 @@ void vaoUnbind(VAO &vao)
+ 	}
+ }
+ 
++#ifdef MKXP_VITA_TILEATLAS_SHADER_BLIT
++/* Vita test only: take the quad/shader fallback instead of glBlitFramebuffer. In the Vita
++ * minimal build these GLMeta blits are used only by TileAtlasVX::build. */
++#define HAVE_NATIVE_BLIT false
++#else
+ #define HAVE_NATIVE_BLIT (gl.BlitFramebuffer && shState->config().smoothScaling <= Bilinear && shState->config().smoothScalingDown <= Bilinear)
++#endif
+ 
+ int blitScaleIsSpecial(TEXFBO &target, bool targetPreferHires, const IntRect &targetRect, TEXFBO &source, const IntRect &sourceRect)
+ {
+@@ -192,6 +198,14 @@ int smoothScalingMethod(int scaleIsSpecial)
+ 	return shState->config().smoothScaling;
+ }
+ 
++#ifdef MKXP_VITA_BLIT_PROJ_FIX
++/* Vita: applyViewportProj() is pinned to the 544x416 screen space (MKXP_VITA_MINIMAL_TEST).
++ * For the offscreen blit target, project onto its real size, as upstream does via the viewport. */
++#define VITA_BLIT_TARGET_PROJ(shader, size) (shader).projMat.set(size)
++#else
++#define VITA_BLIT_TARGET_PROJ(shader, size)
++#endif
++
+ static void _blitBegin(FBO::ID fbo, const Vec2i &size, int scaleIsSpecial)
+ {
+ 	if (HAVE_NATIVE_BLIT)
+@@ -206,11 +220,13 @@ static void _blitBegin(FBO::ID fbo, const Vec2i &size, int scaleIsSpecial)
+ 
+ 		switch (smoothScalingMethod(scaleIsSpecial))
+ 		{
++#ifndef MKXP_VITA_NO_SCALING_SHADERS
+ 		case Bicubic:
+ 		{
+ 			BicubicShader &shader = shState->shaders().bicubic;
+ 			shader.bind();
+ 			shader.applyViewportProj();
++			VITA_BLIT_TARGET_PROJ(shader, size);
+ 			shader.setTranslation(Vec2i());
+ 			shader.setTexSize(Vec2i(size.x, size.y));
+ 			shader.setSharpness(shState->config().bicubicSharpness);
+@@ -222,17 +238,20 @@ static void _blitBegin(FBO::ID fbo, const Vec2i &size, int scaleIsSpecial)
+ 			Lanczos3Shader &shader = shState->shaders().lanczos3;
+ 			shader.bind();
+ 			shader.applyViewportProj();
++			VITA_BLIT_TARGET_PROJ(shader, size);
+ 			shader.setTranslation(Vec2i());
+ 			shader.setTexSize(Vec2i(size.x, size.y));
+ 		}
+ 
+ 			break;
++#endif
+ #ifdef MKXPZ_SSL
+ 		case xBRZ:
+ 		{
+ 			XbrzShader &shader = shState->shaders().xbrz;
+ 			shader.bind();
+ 			shader.applyViewportProj();
++			VITA_BLIT_TARGET_PROJ(shader, size);
+ 			shader.setTranslation(Vec2i());
+ 			shader.setTexSize(Vec2i(size.x, size.y));
+ 			shader.setTargetScale(Vec2(1., 1.));
+@@ -245,6 +264,7 @@ static void _blitBegin(FBO::ID fbo, const Vec2i &size, int scaleIsSpecial)
+ 			SimpleShader &shader = shState->shaders().simple;
+ 			shader.bind();
+ 			shader.applyViewportProj();
++			VITA_BLIT_TARGET_PROJ(shader, size);
+ 			shader.setTranslation(Vec2i());
+ 			shader.setTexSize(Vec2i(size.x, size.y));
+ 		}
+@@ -310,6 +330,7 @@ void blitSource(TEXFBO &source, int scaleIsSpecial)
+ 	{
+ 		switch (smoothScalingMethod(scaleIsSpecial))
+ 		{
++#ifndef MKXP_VITA_NO_SCALING_SHADERS
+ 		case Bicubic:
+ 		{
+ 			BicubicShader &shader = shState->shaders().bicubic;
+@@ -326,6 +347,7 @@ void blitSource(TEXFBO &source, int scaleIsSpecial)
+ 		}
+ 
+ 			break;
++#endif
+ #ifdef MKXPZ_SSL
+ 		case xBRZ:
+ 		{
+diff --git a/src/display/gl/gl-util.h b/src/display/gl/gl-util.h
+index 099edb9..5f423cc 100644
+--- a/src/display/gl/gl-util.h
++++ b/src/display/gl/gl-util.h
+@@ -208,6 +208,20 @@ typedef struct GenericBO<GL_ELEMENT_ARRAY_BUFFER> IBO;
+ 
+ /* Convenience struct wrapping a framebuffer
+  * and a 2D texture as its target */
++#ifdef MKXP_VITA_DEFERRED_GL_DELETE
++/*
++ * Vita fix (MKXP_VITA_DEFERRED_GL_DELETE): vitaGL frees texture memory at once unless the texture
++ * was *sampled* within FRAME_PURGE_FREQ frames; being rendered into as an FBO colour attachment is
++ * not tracked. A TEXFBO deleted right after being rendered (e.g. a closed window's base texture on
++ * scene change) could be freed while the GPU still writes it. TEXFBO::fini deletes the FBO at once
++ * and queues the texture; vitaDeferredGLDeleteTick() (after every vglSwapBuffers) deletes it a few
++ * swaps later.
++ * Defined in mkxp_vita_minimal/src/gl-fun-vita.cpp.
++ */
++void vitaDeferTexFboDelete(GLuint tex, GLuint fbo);
++void vitaDeferredGLDeleteTick();
++#endif
++
+ struct TEXFBO
+ {
+ 	TEX::ID tex;
+@@ -250,8 +264,12 @@ struct TEXFBO
+ 
+ 	static inline void fini(TEXFBO &obj)
+ 	{
++#ifdef MKXP_VITA_DEFERRED_GL_DELETE
++		vitaDeferTexFboDelete(obj.tex.gl, obj.fbo.gl);
++#else
+ 		FBO::del(obj.fbo);
+ 		TEX::del(obj.tex);
++#endif
+ 	}
+ 
+ 	static inline void clear(TEXFBO &obj)
+diff --git a/src/display/gl/glstate.cpp b/src/display/gl/glstate.cpp
+index d021d88..8c45125 100644
+--- a/src/display/gl/glstate.cpp
++++ b/src/display/gl/glstate.cpp
+@@ -38,6 +38,9 @@ void GLClearColor::apply(const Vec4 &value) {
+ }
+ 
+ void GLScissorBox::apply(const IntRect &value) {
++#ifdef __vita__
++  gl.Scissor(value.x, value.y, value.w, value.h);
++#else
+   // High-res: scale the scissorbox if we're rendering to the PingPong framebuffer.
+   if (shState) {
+     const double framebufferScalingFactor = shState->config().framebufferScalingFactor;
+@@ -51,6 +54,7 @@ void GLScissorBox::apply(const IntRect &value) {
+   else {
+     gl.Scissor(value.x, value.y, value.w, value.h);
+   }
++#endif
+ }
+ 
+ void GLScissorBox::setIntersect(const IntRect &value) {
+diff --git a/src/display/gl/quadarray.h b/src/display/gl/quadarray.h
+index 2d9e6cc..9ad2ac1 100644
+--- a/src/display/gl/quadarray.h
++++ b/src/display/gl/quadarray.h
+@@ -31,6 +31,7 @@
+ 
+ #include <vector>
+ #include <stdint.h>
++#include <stddef.h>
+ 
+ template<class VertexType>
+ struct QuadArray
+@@ -41,7 +42,7 @@ struct QuadArray
+ 	GLMeta::VAO vao;
+ 
+ 	size_t quadCount;
+-	GLsizeiptr vboSize;
++	ptrdiff_t vboSize;
+ 
+ 	QuadArray()
+ 	    : quadCount(0),
+@@ -80,7 +81,7 @@ struct QuadArray
+ 	{
+ 		VBO::bind(vbo);
+ 
+-		GLsizeiptr size = vertices.size() * sizeof(VertexType);
++		ptrdiff_t size = vertices.size() * sizeof(VertexType);
+ 
+ 		if (size > vboSize)
+ 		{
+diff --git a/src/display/gl/shader.cpp b/src/display/gl/shader.cpp
+index 980d995..049f28c 100644
+--- a/src/display/gl/shader.cpp
++++ b/src/display/gl/shader.cpp
+@@ -315,14 +315,48 @@ void ShaderBase::init()
+ 
+ void ShaderBase::applyViewportProj()
+ {
+-	// High-res: scale the matrix if we're rendering to the PingPong framebuffer.
+-	const IntRect &vp = glState.viewport.get();
+-	if (shState->config().enableHires && shState->graphics().isPingPongFramebufferActive() && framebufferScalingAllowed()) {
+-		projMat.set(Vec2i(shState->graphics().width(), shState->graphics().height()));
+-	}
+-	else {
+-		projMat.set(Vec2i(vp.w, vp.h));
+-	}
++#ifdef MKXP_VITA_MINIMAL_TEST
++
++    /*
++     * Coordinate logiche di RPG Maker VX Ace / LISA.
++     *
++     * Il framebuffer Vita è 960x544, ma tutto il mondo
++     * RGSS viene disegnato nello spazio 544x416.
++     */
++    projMat.set(
++        Vec2i(
++            544,
++            416
++        )
++    );
++
++#else
++
++    // High-res: scale the matrix if we're rendering to the PingPong framebuffer.
++    const IntRect &vp = glState.viewport.get();
++
++    if (shState->config().enableHires &&
++        shState->graphics().isPingPongFramebufferActive() &&
++        framebufferScalingAllowed())
++    {
++        projMat.set(
++            Vec2i(
++                shState->graphics().width(),
++                shState->graphics().height()
++            )
++        );
++    }
++    else
++    {
++        projMat.set(
++            Vec2i(
++                vp.w,
++                vp.h
++            )
++        );
++    }
++
++#endif
+ }
+ 
+ bool ShaderBase::framebufferScalingAllowed()
+diff --git a/src/display/gl/shader.h b/src/display/gl/shader.h
+index adc6f12..d56f77b 100644
+--- a/src/display/gl/shader.h
++++ b/src/display/gl/shader.h
+@@ -475,13 +475,19 @@ struct ShaderSet
+ 	KglSubtractShader kglSubtract;
+ 	KglShadowShaderH kglShadowH;
+ 	KglShadowShaderV kglShadowV;
++#ifndef MKXP_VITA_NO_SCALING_SHADERS
++	/* Vita (MKXP_VITA_NO_SCALING_SHADERS): not built; smoothScaling is NearestNeighbor and these two
++	 * links alone cost ~76 s on the first ShaderSet construction. */
+ 	BicubicShader bicubic;
+ 	Lanczos3Shader lanczos3;
++#endif
+ #ifdef MKXPZ_SSL
+ 	XbrzShader xbrz;
+ #endif
++#ifndef MKXP_VITA_NO_SCALING_SHADERS
+ 	Lanczos3SpriteShader lanczos3Sprite;
+ 	BicubicSpriteShader bicubicSprite;
++#endif
+ #ifdef MKXPZ_SSL
+ 	XbrzSpriteShader xbrzSprite;
+ #endif
+diff --git a/src/display/gl/tileatlasvx.cpp b/src/display/gl/tileatlasvx.cpp
+index a09e76c..5a317d1 100644
+--- a/src/display/gl/tileatlasvx.cpp
++++ b/src/display/gl/tileatlasvx.cpp
+@@ -30,12 +30,108 @@
+ #include "gl-meta.h"
+ #include "sharedstate.h"
+ #include "glstate.h"
++#ifdef MKXP_VITA_ATLAS_PARK
++#include "exception.h"
++#endif
+ #include "texpool.h"
+ #include "util.h"
+ 
+ #include <assert.h>
+ #include <vector>
+ 
++#ifdef MKXP_VITA_DUMP_TILEATLAS
++/*
++ * Vita diagnostic only (OFF by default): logs and dumps the first TileAtlasVX::build() that has
++ * at least one source bitmap. The hooks only observe; build() draws exactly the same things.
++ * Output in ux0:data/ruby_vita_test/: tileatlas_000.log, tileatlas_000.tga (glReadPixels of the
++ * atlas FBO), tileatlas_000_texmem.tga (atlas texture memory), tileatlas_src_N.tga (sources).
++ */
++#include <stdio.h>
++#include <stdarg.h>
++#include <stdlib.h>
++#include <string.h>
++
++#define VITA_ATLAS_DIR "ux0:data/ruby_vita_test/"
++
++static const char *const vitaAtlasLabels[BM_COUNT] = { "A1", "A2", "A3", "A4", "A5", "B", "C", "D", "E" };
++static bool vitaAtlasDone = false;
++static bool vitaAtlasActive = false;
++static int vitaAtlasSource = -1;
++static int vitaAtlasSkippedEmpty = 0;
++static int vitaAtlasErrors = 0;
++
++static void vitaAtlasLog(const char *fmt, ...)
++{
++	FILE *f = fopen(VITA_ATLAS_DIR "tileatlas_000.log", "a");
++	if (!f)
++		return;
++	va_list ap;
++	va_start(ap, fmt);
++	vfprintf(f, fmt, ap);
++	va_end(ap);
++	fputc('\n', f);
++	fclose(f);
++}
++
++static void vitaAtlasCheck(const char *where)
++{
++	if (!vitaAtlasActive)
++		return;
++	GLenum e = gl.GetError();
++	if (e != GL_NO_ERROR)
++		++vitaAtlasErrors;
++	vitaAtlasLog("TILEATLAS_GL_CHECK after=%s err=0x%x", where, (unsigned)e);
++}
++
++static unsigned vitaAtlasTexFormat()
++{
++	SceGxmTexture *t = vglGetGxmTexture(GL_TEXTURE_2D);
++	return t ? (unsigned)sceGxmTextureGetFormat(t) : 0u;
++}
++
++/* Uncompressed 32-bit TGA, top-left origin: file row 0 = memory row 0 (atlas y = 0). */
++static int vitaAtlasWriteTga(const char *name, const uint8_t *rgba, int w, int h, int strideBytes)
++{
++	if (!rgba)
++		return -3;
++	FILE *f = fopen(name, "wb");
++	if (!f)
++		return -1;
++	uint8_t hdr[18];
++	memset(hdr, 0, sizeof(hdr));
++	hdr[2] = 2;
++	hdr[12] = w & 0xff;
++	hdr[13] = (w >> 8) & 0xff;
++	hdr[14] = h & 0xff;
++	hdr[15] = (h >> 8) & 0xff;
++	hdr[16] = 32;
++	hdr[17] = 0x28;
++	int rc = fwrite(hdr, 1, sizeof(hdr), f) == sizeof(hdr) ? 0 : -2;
++	std::vector<uint8_t> row(w * 4);
++	for (int y = 0; y < h && rc == 0; ++y)
++	{
++		const uint8_t *src = rgba + (size_t)y * strideBytes;
++		for (int x = 0; x < w; ++x)
++		{
++			row[x*4+0] = src[x*4+2];
++			row[x*4+1] = src[x*4+1];
++			row[x*4+2] = src[x*4+0];
++			row[x*4+3] = src[x*4+3];
++		}
++		if (fwrite(row.data(), 1, row.size(), f) != row.size())
++			rc = -2;
++	}
++	fclose(f);
++	return rc;
++}
++
++#define VITA_ATLAS_CHECK(where) vitaAtlasCheck(where)
++#define VITA_ATLAS_SET_SOURCE(i) (vitaAtlasSource = (i), vitaAtlasCheck("blitSource"))
++#else
++#define VITA_ATLAS_CHECK(where)
++#define VITA_ATLAS_SET_SOURCE(i)
++#endif
++
+ /* Regular (A) autotile patterns */
+ extern const StaticRect autotileVXRectsA[];
+ extern const int autotileVXRectsAN;
+@@ -265,24 +361,328 @@ static void doBlit(Bitmap *bm, const IntRect &src, const Vec2i &dst)
+ 	IntRect bmr(0, 0, bm->width(), bm->height());
+ 
+ 	if (!SDL_IntersectRect(&_src, &bmr, &_src))
++	{
++#ifdef MKXP_VITA_DUMP_TILEATLAS
++		if (vitaAtlasActive)
++			vitaAtlasLog("TILEATLAS_BLIT_SKIPPED source=%d tiles_src=%d,%d,%d,%d tiles_dst=%d,%d bitmap=%dx%d",
++			             vitaAtlasSource, src.x, src.y, src.w, src.h, dst.x, dst.y, bmr.w, bmr.h);
++#endif
+ 		return;
++	}
++
++#ifdef MKXP_VITA_DUMP_TILEATLAS
++	if (vitaAtlasActive)
++		vitaAtlasLog("TILEATLAS_BLIT source=%d src=%d,%d,%d,%d dst=%d,%d,%d,%d",
++		             vitaAtlasSource, _src.x, _src.y, _src.w, _src.h, _dst.x, _dst.y, _src.w, _src.h);
++#endif
+ 
+ 	GLMeta::blitRectangle(_src, _dst);
++
++	VITA_ATLAS_CHECK("blitRectangle");
++}
++
++#ifdef MKXP_VITA_DUMP_TILEATLAS
++static void vitaAtlasBegin(TEXFBO &tf, Bitmap *bitmaps[BM_COUNT])
++{
++	if (vitaAtlasDone)
++		return;
++
++	int present = 0;
++	for (int i = 0; i < BM_COUNT; ++i)
++		if (!nullOrDisposed(bitmaps[i]))
++			++present;
++	if (present == 0)
++	{
++		++vitaAtlasSkippedEmpty;
++		return;
++	}
++
++	FILE *f = fopen(VITA_ATLAS_DIR "tileatlas_000.log", "w");
++	if (f)
++		fclose(f);
++
++	vitaAtlasActive = true;
++	vitaAtlasErrors = 0;
++	gl.GetError(); /* start from a clean error state */
++
++	vitaAtlasLog("TILEATLAS_BEGIN");
++	vitaAtlasLog("atlas_size=%d x %d tex=%u fbo=%u hires=%s rgssVer=%d skipped_empty_builds=%d",
++	             tf.width, tf.height, (unsigned)tf.tex.gl, (unsigned)tf.fbo.gl,
++	             tf.selfHires ? "yes" : "no", rgssVer, vitaAtlasSkippedEmpty);
++
++	for (int i = 0; i < BM_COUNT; ++i)
++	{
++		Bitmap *bm = bitmaps[i];
++		if (nullOrDisposed(bm))
++		{
++			vitaAtlasLog("SOURCE %s = NULL", vitaAtlasLabels[i]);
++			continue;
++		}
++		TEXFBO &g = bm->getGLTypes();
++		vitaAtlasLog("TILEATLAS_SOURCE index=%d label=%s size=%d x %d gl_size=%d x %d tex=%u fbo=%u hires=%s",
++		             i, vitaAtlasLabels[i], bm->width(), bm->height(), g.width, g.height,
++		             (unsigned)g.tex.gl, (unsigned)g.fbo.gl, g.selfHires ? "yes" : "no");
++	}
++}
++
++static void vitaAtlasEnd(TEXFBO &tf, Bitmap *bitmaps[BM_COUNT])
++{
++	if (!vitaAtlasActive)
++		return;
++
++	GLint prevTex = 0;
++	gl.GetIntegerv(GL_TEXTURE_BINDING_2D, &prevTex);
++	FBO::ID prevFbo = FBO::boundFramebufferID;
++
++	FBO::bind(tf.fbo);
++	GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
++	vitaAtlasLog("TILEATLAS_FBO_STATUS=0x%x (complete=0x%x)", (unsigned)status, (unsigned)GL_FRAMEBUFFER_COMPLETE);
++	vitaAtlasCheck("fbo_status");
++
++	glFinish();
++	vitaAtlasCheck("glFinish");
++
++	vitaAtlasLog("TILEATLAS_DUMP_BEGIN");
++
++	/* 1: glReadPixels of the atlas FBO (as requested). */
++	const int w = tf.width, h = tf.height;
++	uint8_t *buf = (uint8_t *)malloc((size_t)w * h * 4);
++	int rcRead = -3;
++	if (buf)
++	{
++		memset(buf, 0, (size_t)w * h * 4);
++		gl.ReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, buf);
++		vitaAtlasCheck("glReadPixels");
++		rcRead = vitaAtlasWriteTga(VITA_ATLAS_DIR "tileatlas_000.tga", buf, w, h, w * 4);
++	}
++	vitaAtlasLog("TILEATLAS_DUMP file=tileatlas_000.tga method=glReadPixels(FBO) size=%d x %d rc=%d", w, h, rcRead);
++
++	/* 2: the atlas texture memory itself, i.e. what TilemapVX samples. */
++	TEX::bind(tf.tex);
++	const uint8_t *texmem = (const uint8_t *)vglGetTexDataPointer(GL_TEXTURE_2D);
++	const int texStride = ((w + 7) & ~7) * 4;
++	unsigned atlasFmt = vitaAtlasTexFormat();
++	int rcTex = vitaAtlasWriteTga(VITA_ATLAS_DIR "tileatlas_000_texmem.tga", texmem, w, h, texStride);
++	vitaAtlasLog("TILEATLAS_DUMP file=tileatlas_000_texmem.tga method=vglGetTexDataPointer data=%p stride=%d gxm_format=0x%08x rc=%d",
++	             texmem, texStride, atlasFmt, rcTex);
++
++	if (buf && texmem)
++	{
++		int diffRows = 0;
++		for (int y = 0; y < h; ++y)
++			if (memcmp(buf + (size_t)y * w * 4, texmem + (size_t)y * texStride, (size_t)w * 4) != 0)
++				++diffRows;
++		vitaAtlasLog("TILEATLAS_READPIXELS_VS_TEXMEM differing_rows=%d of %d", diffRows, h);
++	}
++	free(buf);
++
++	/* 3: source bitmaps, from their texture memory (their FBOs predate the PNG upload). */
++	int rcSrc = 0;
++	for (int i = 0; i < BM_COUNT; ++i)
++	{
++		Bitmap *bm = bitmaps[i];
++		if (nullOrDisposed(bm))
++			continue;
++		TEXFBO &g = bm->getGLTypes();
++		TEX::bind(g.tex);
++		const uint8_t *mem = (const uint8_t *)vglGetTexDataPointer(GL_TEXTURE_2D);
++		const int stride = ((g.width + 7) & ~7) * 4;
++		char name[128];
++		snprintf(name, sizeof(name), VITA_ATLAS_DIR "tileatlas_src_%d.tga", i);
++		int rc = vitaAtlasWriteTga(name, mem, g.width, g.height, stride);
++		if (rc != 0)
++			rcSrc = rc;
++		vitaAtlasLog("TILEATLAS_SOURCE_DUMP index=%d label=%s file=tileatlas_src_%d.tga size=%d x %d data=%p stride=%d gxm_format=0x%08x rc=%d",
++		             i, vitaAtlasLabels[i], i, g.width, g.height, mem, stride, vitaAtlasTexFormat(), rc);
++	}
++
++	/* Restore the texture and framebuffer bindings build() left behind. */
++	gl.BindTexture(GL_TEXTURE_2D, (GLuint)prevTex);
++	FBO::bind(prevFbo);
++	vitaAtlasCheck("restore");
++
++	vitaAtlasLog("TILEATLAS_GL_ERROR=%d", vitaAtlasErrors);
++	vitaAtlasLog("TILEATLAS_DUMP_END rc=%d", (rcRead != 0) ? rcRead : (rcTex != 0 ? rcTex : rcSrc));
++	vitaAtlasLog("TILEATLAS_END");
++
++	vitaAtlasActive = false;
++	vitaAtlasDone = true;
++}
++#endif
++
++#ifdef MKXP_VITA_DEBUG_TILESET
++/*
++ * Vita diagnostic only (MKXP_VITA_DEBUG_TILESET, OFF by default): after every build, compare the
++ * atlas texture memory with the texture memory of each source bitmap, blit by blit (the blits are
++ * 1:1 copies), and log the result to ux0:data/ruby_vita_test/tileset.log. Also describes each
++ * source (Bitmap::vitaDiagDescribe: pointer, texture, file, texture memory vs PNG) and dumps the
++ * atlas texture memory of the first 8 builds as tileset_atlas_NN.tga. Uses glFinish; observe only.
++ */
++#include <stdio.h>
++#include <stdarg.h>
++#include <string.h>
++#include <vitaGL.h>
++
++static int vitaTsBuilds = 0;
++static const char *const vitaTsLabels[BM_COUNT] = { "A1", "A2", "A3", "A4", "A5", "B", "C", "D", "E" };
++
++static void vitaTsLog(const char *fmt, ...)
++{
++	FILE *f = fopen("ux0:data/ruby_vita_test/tileset.log", "a");
++	if (!f)
++		return;
++	va_list ap;
++	va_start(ap, fmt);
++	vfprintf(f, fmt, ap);
++	va_end(ap);
++	fputc('\n', f);
++	fclose(f);
++}
++
++static void vitaTsWriteTga(const char *name, const uint8_t *rgba, int w, int h, int stride)
++{
++	FILE *f = fopen(name, "wb");
++	if (!f || !rgba) { if (f) fclose(f); return; }
++	const uint8_t hdr[18] = { 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, (uint8_t)(w & 255), (uint8_t)(w >> 8),
++	                          (uint8_t)(h & 255), (uint8_t)(h >> 8), 32, 0x28 };
++	fwrite(hdr, 1, sizeof(hdr), f);
++	std::vector<uint8_t> row(w * 4);
++	for (int y = 0; y < h; ++y) {
++		const uint8_t *s = rgba + (size_t)y * stride;
++		for (int x = 0; x < w; ++x) {
++			row[x*4+0] = s[x*4+2]; row[x*4+1] = s[x*4+1]; row[x*4+2] = s[x*4+0]; row[x*4+3] = s[x*4+3];
++		}
++		fwrite(row.data(), 1, row.size(), f);
++	}
++	fclose(f);
++}
++
++static void vitaTsVerifyPart(int part, Bitmap *bm, const Blit *blits, size_t n,
++                             const uint8_t *atlas, int atlasStride, int atlasW, int atlasH)
++{
++	char desc[512];
++#ifdef MKXP_VITA_DEBUG_TILESET_DUMP
++	bm->vitaDiagDescribe(desc, sizeof(desc), true);   /* + texture memory vs fresh PNG decode */
++#else
++	bm->vitaDiagDescribe(desc, sizeof(desc), false);
++#endif
++
++	TEXFBO &g = bm->getGLTypes();
++	TEX::bind(g.tex);
++	const uint8_t *src = (const uint8_t *)vglGetTexDataPointer(GL_TEXTURE_2D);
++	const int srcStride = ((g.width + 7) & ~7) * 4;
++
++	long total = 0, diff = 0, diffVisible = 0;
++	int firstX = -1, firstY = -1;
++	for (size_t b = 0; b < n && src && atlas; ++b) {
++		IntRect r(blits[b].src.x*32, blits[b].src.y*32, blits[b].src.w*32, blits[b].src.h*32);
++		IntRect bmr(0, 0, g.width, g.height);
++		if (!SDL_IntersectRect(&r, &bmr, &r))
++			continue;
++		const int dx = blits[b].dst.x*32 + (r.x - blits[b].src.x*32);
++		const int dy = blits[b].dst.y*32 + (r.y - blits[b].src.y*32);
++		for (int y = 0; y < r.h; ++y) {
++			if (dy + y < 0 || dy + y >= atlasH)
++				continue;
++			const uint8_t *a = atlas + (size_t)(dy + y) * atlasStride;
++			const uint8_t *s = src + (size_t)(r.y + y) * srcStride;
++			for (int x = 0; x < r.w; ++x) {
++				if (dx + x < 0 || dx + x >= atlasW)
++					continue;
++				const uint8_t *ap = a + (dx + x) * 4, *sp = s + (r.x + x) * 4;
++				++total;
++				if (memcmp(ap, sp, 4) != 0) {
++					++diff;
++					if (ap[3] || sp[3]) {
++						if (diffVisible++ == 0) { firstX = dx + x; firstY = dy + y; }
++					}
++				}
++			}
++		}
++	}
++	vitaTsLog("TS_ATLAS_PART build=%d part=%s blits=%u compared_px=%ld diff_px=%ld diff_visible_px=%ld first_visible_diff=%d,%d | %s",
++	          vitaTsBuilds, vitaTsLabels[part], (unsigned)n, total, diff, diffVisible, firstX, firstY, desc);
+ }
+ 
++static void vitaTsVerify(TEXFBO &tf, Bitmap *bitmaps[BM_COUNT])
++{
++	GLint prevTex = 0;
++	glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTex);
++	glFinish();
++
++	TEX::bind(tf.tex);
++	const uint8_t *atlas = (const uint8_t *)vglGetTexDataPointer(GL_TEXTURE_2D);
++	const int atlasStride = ((tf.width + 7) & ~7) * 4;
++	GLint fbAttach = 0;
++	{
++		/* Which texture the atlas FBO really renders into (0 = no FBO / no attachment). */
++		FBO::ID prevFbo = FBO::boundFramebufferID;
++		if (tf.fbo.gl) {
++			FBO::bind(tf.fbo);
++			::glGetFramebufferAttachmentParameteriv(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
++			                                       GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, &fbAttach);
++			FBO::bind(prevFbo);
++		}
++	}
++	vitaTsLog("TS_ATLAS_BUILD build=%d atlas_tex=%u atlas_fbo=%u fbo_attached_tex=%d size=%dx%d texmem=%p",
++	          vitaTsBuilds, (unsigned)tf.tex.gl, (unsigned)tf.fbo.gl, (int)fbAttach, tf.width, tf.height, (const void *)atlas);
++#ifdef MKXP_VITA_DEBUG_TILESET_DUMP
++	if (vitaTsBuilds < 8 && atlas) {
++		char name[96];
++		snprintf(name, sizeof(name), "ux0:data/ruby_vita_test/tileset_atlas_%02d.tga", vitaTsBuilds);
++		vitaTsWriteTga(name, atlas, tf.width, tf.height, atlasStride);
++		vitaTsLog("TS_ATLAS_DUMP build=%d file=%s", vitaTsBuilds, name);
++	}
++#endif
++
++	const struct { const Blit *b; size_t n; } parts[BM_COUNT] = {
++		{ blitsA1, blitsA1N }, { blitsA2, blitsA2N }, { blitsA3, blitsA3N }, { blitsA4, blitsA4N },
++		{ blitsA5, blitsA5N }, { blitsB, blitsBN }, { blitsC, blitsCN }, { blitsD, blitsDN }, { blitsE, blitsEN }
++	};
++	for (int i = 0; i < BM_COUNT; ++i) {
++		if (nullOrDisposed(bitmaps[i])) {
++			vitaTsLog("TS_ATLAS_PART build=%d part=%s NULL", vitaTsBuilds, vitaTsLabels[i]);
++			continue;
++		}
++		/* The source texture binding moves; the atlas pointer stays valid (no GPU work queued). */
++		vitaTsVerifyPart(i, bitmaps[i], parts[i].b, parts[i].n, atlas, atlasStride, tf.width, tf.height);
++	}
++	glBindTexture(GL_TEXTURE_2D, (GLuint)prevTex);
++	++vitaTsBuilds;
++}
++#endif
++
+ void build(TEXFBO &tf, Bitmap *bitmaps[BM_COUNT])
+ {
++/* Keep the original line numbers (used by assert) whether or not the Vita diagnostic is built. */
++#line 275
+ 	assert(tf.width == ATLASVX_W && tf.height == ATLASVX_H);
+ 
++#ifdef MKXP_VITA_DUMP_TILEATLAS
++	vitaAtlasBegin(tf, bitmaps);
++#endif
++
+ 	GLMeta::blitBegin(tf, true);
+ 
++	VITA_ATLAS_CHECK("blitBegin(fbo_bind)");
++
+ 	glState.clearColor.pushSet(Vec4());
+ 	FBO::clear();
+ 	glState.clearColor.pop();
+ 
++	VITA_ATLAS_CHECK("clear");
++
+ 	if (rgssVer >= 3)
+ 	{
+ 		SDL_Surface *shadow = createShadowSet();
++#ifdef MKXP_VITA_ATLAS_PARK
++		/* Vita fix: out of memory, the surface is NULL (d68: data abort reading shadow->pixels).
++		 * An mkxp exception from rendering becomes a Ruby exception (MKXP_VITA_RENDER_EXC). */
++		if (!shadow) {
++			GLMeta::blitEnd();
++			throw Exception(Exception::MKXPError, "out of memory while building the tile atlas (%s)", SDL_GetError());
++		}
++#endif
+ 		if (tf.selfHires != nullptr) {
+ 			SDL_Rect srcRect({0, 0, shadow->w, shadow->h});
+ 			int destX = shadowArea.x*32 * tf.selfHires->width / tf.width;
+@@ -302,11 +702,21 @@ void build(TEXFBO &tf, Bitmap *bitmaps[BM_COUNT])
+ 			TEX::bind(tf.selfHires->tex);
+ 			TEX::uploadSubImage(destX, destY,
+ 				blitTemp->w, blitTemp->h, blitTemp->pixels, GL_RGBA);
++#ifdef MKXP_VITA_DUMP_TILEATLAS
++			if (vitaAtlasActive)
++				vitaAtlasLog("TILEATLAS_SHADOW_UPLOAD target=hires dst=%d,%d size=%d x %d", destX, destY, blitTemp->w, blitTemp->h);
++#endif
++			VITA_ATLAS_CHECK("uploadSubImage(shadow,hires)");
+ 		}
+ 		else {
+ 			TEX::bind(tf.tex);
+ 			TEX::uploadSubImage(shadowArea.x*32, shadowArea.y*32,
+ 				shadow->w, shadow->h, shadow->pixels, GL_RGBA);
++#ifdef MKXP_VITA_DUMP_TILEATLAS
++			if (vitaAtlasActive)
++				vitaAtlasLog("TILEATLAS_SHADOW_UPLOAD target=lores dst=%d,%d size=%d x %d", shadowArea.x*32, shadowArea.y*32, shadow->w, shadow->h);
++#endif
++			VITA_ATLAS_CHECK("uploadSubImage(shadow,lores)");
+ 		}
+ 		SDL_FreeSurface(shadow);
+ 	}
+@@ -317,6 +727,7 @@ void build(TEXFBO &tf, Bitmap *bitmaps[BM_COUNT])
+ 	if (!nullOrDisposed(bm = bitmaps[BM_##part])) \
+ 	{ \
+ 		GLMeta::blitSource(bm->getGLTypes()); \
++		VITA_ATLAS_SET_SOURCE(BM_##part); \
+ 		for (size_t i = 0; i < blits##part##N; ++i) \
+ 		{\
+ 			const IntRect &src = blits##part[i].src; \
+@@ -338,8 +749,16 @@ void build(TEXFBO &tf, Bitmap *bitmaps[BM_COUNT])
+ #undef EXEC_BLITS
+ 
+ 	GLMeta::blitEnd();
++
++#ifdef MKXP_VITA_DUMP_TILEATLAS
++	vitaAtlasEnd(tf, bitmaps);
++#endif
++#ifdef MKXP_VITA_DEBUG_TILESET
++	vitaTsVerify(tf, bitmaps);
++#endif
+ }
+ 
++#line 343
+ #define OVER_PLAYER_FLAG (1 << 4)
+ #define TABLE_FLAG       (1 << 7)
+ 
+diff --git a/src/display/graphics.h b/src/display/graphics.h
+index ac5ab55..a049469 100644
+--- a/src/display/graphics.h
++++ b/src/display/graphics.h
+@@ -111,7 +111,12 @@ private:
+ 	GraphicsPrivate *p;
+ };
+ 
++#ifdef MKXP_VITA_MINIMAL_TEST
++#define GFX_LOCK
++#define GFX_UNLOCK
++#else
+ #define GFX_LOCK shState->graphics().lock()
+ #define GFX_UNLOCK shState->graphics().unlock()
++#endif
+ 
+ #endif // GRAPHICS_H
+diff --git a/src/display/plane.cpp b/src/display/plane.cpp
+index fb698de..2b048fd 100644
+--- a/src/display/plane.cpp
++++ b/src/display/plane.cpp
+@@ -357,6 +357,13 @@ void Plane::initDynAttribs()
+ 
+ void Plane::draw()
+ {
++	static bool logged_first_plane = false;
++	if (!logged_first_plane) {
++		FILE *f = fopen("ux0:data/ruby_vita_test/qa.log", "a");
++		if (f) { fprintf(f, "FIRST_PLANE_DRAW\n"); fclose(f); }
++		logged_first_plane = true;
++	}
++
+ 	if (nullOrDisposed(p->bitmap))
+ 		return;
+ 
+@@ -367,7 +374,12 @@ void Plane::draw()
+ 
+ 	if (p->color->hasEffect() || p->tone->hasEffect() || p->opacity != 255)
+ 	{
++#ifdef MKXP_VITA_MINIMAL_TEST
++		static PlaneShader vitaPlaneShader;
++		PlaneShader &shader = vitaPlaneShader;
++#else
+ 		PlaneShader &shader = shState->shaders().plane;
++#endif
+ 
+ 		shader.bind();
+ 		shader.applyViewportProj();
+@@ -380,7 +392,12 @@ void Plane::draw()
+ 	}
+ 	else
+ 	{
++#ifdef MKXP_VITA_MINIMAL_TEST
++		static SimpleShader vitaSimpleShader;
++		SimpleShader &shader = vitaSimpleShader;
++#else
+ 		SimpleShader &shader = shState->shaders().simple;
++#endif
+ 
+ 		shader.bind();
+ 		shader.applyViewportProj();
+diff --git a/src/display/sprite.cpp b/src/display/sprite.cpp
+index e6d945b..775a36d 100644
+--- a/src/display/sprite.cpp
++++ b/src/display/sprite.cpp
+@@ -46,6 +46,9 @@
+ 
+ #include "sigslot/signal.hpp"
+ 
++#include <psp2/kernel/clib.h>
++#include "vita_perf.h"
++
+ static float fwrap(float value, float range)
+ {
+     float res = fmod(value, range);
+@@ -617,8 +620,18 @@ struct SpritePrivate
+     
+     void prepare()
+     {
++        VITA_PERF_SCOPE(SPRITE_PREPARE);
++
+         // Skip preparations and drawing if the bitmap is disposed or the sprite or viewport is invisible
++#ifdef MKXP_VITA_DISPOSED_VP_SKIP
++        // Vita fix: a sprite left on a disposed viewport (LISA, d64: map 61 fade-in after a scene
++        // return) raised "disposed viewport" here, from Graphics.update, and the game stopped. The
++        // disposed viewport is unlinked from the screen, so its sprites are never drawn: skip them.
++        if (nullOrDisposed(realBitmap) || !(*spriteVisible) ||
++            (viewport && (viewport->isDisposed() || !viewport->getVisible())))
++#else
+         if (nullOrDisposed(realBitmap) || !(*spriteVisible) || (viewport && !viewport->getVisible()))
++#endif
+         {
+             isVisible = false;
+             return;
+@@ -944,21 +957,31 @@ void Sprite::update()
+ /* SceneElement */
+ void Sprite::draw()
+ {
++    VITA_PERF_SCOPE(SPRITE_DRAW);
++    VITA_PERF_COUNT(SPRITE_DRAWS);
++
++    static bool logged_first_sprite = false;
++    if (!logged_first_sprite) {
++        FILE *f = fopen("ux0:data/ruby_vita_test/qa.log", "a");
++        if (f) { fprintf(f, "FIRST_SPRITE_DRAW\n"); fclose(f); }
++        logged_first_sprite = true;
++    }
++
+     if (!p->isVisible)
+         return;
+-    
++
+     if (emptyFlashFlag)
+         return;
+-    
++
+     ShaderBase *base;
+-    
++
+     bool renderEffect = p->color->hasEffect() ||
+     p->tone->hasEffect()  ||
+     flashing              ||
+     p->bushDepth != 0     ||
+     p->invert             ||
+     (p->pattern && !p->pattern->isDisposed());
+-    
++
+     int scalingMethod = NearestNeighbor;
+ 
+     int sourceWidthHires = p->bitmap->hasHires() ? p->bitmap->getHires()->width() : p->bitmap->width();
+@@ -1000,6 +1023,12 @@ void Sprite::draw()
+ 
+     if (renderEffect)
+     {
++        static bool logged_full = false;
++        if (!logged_full) {
++            sceClibPrintf("SPRITE_BRANCH_FULL_FIRST\n");
++            logged_full = true;
++        }
++
+         if (scalingMethod != NearestNeighbor)
+         {
+             Debug() << "BUG: Smooth SpriteShader not implemented:" << scalingMethod;
+@@ -1007,7 +1036,7 @@ void Sprite::draw()
+         }
+ 
+         SpriteShader &shader = shState->shaders().sprite;
+-        
++
+         shader.bind();
+         shader.applyViewportProj();
+         shader.setSpriteMat(p->trans.getMatrix());
+@@ -1047,6 +1076,12 @@ void Sprite::draw()
+     }
+     else if (p->opacity != 255)
+     {
++        static bool logged_alpha = false;
++        if (!logged_alpha) {
++            sceClibPrintf("SPRITE_BRANCH_ALPHA_FIRST\n");
++            logged_alpha = true;
++        }
++
+         if (scalingMethod != NearestNeighbor)
+         {
+             Debug() << "BUG: Smooth AlphaSpriteShader not implemented:" << scalingMethod;
+@@ -1055,7 +1090,7 @@ void Sprite::draw()
+ 
+         AlphaSpriteShader &shader = shState->shaders().alphaSprite;
+         shader.bind();
+-        
++
+         shader.setSpriteMat(p->trans.getMatrix());
+         shader.setAlpha(p->opacity.norm);
+         shader.applyViewportProj();
+@@ -1065,6 +1100,7 @@ void Sprite::draw()
+     {
+         switch (scalingMethod)
+         {
++#ifndef MKXP_VITA_NO_SCALING_SHADERS
+         case Bicubic:
+         {
+             BicubicSpriteShader &shader = shState->shaders().bicubicSprite;
+@@ -1081,13 +1117,14 @@ void Sprite::draw()
+         {
+             Lanczos3SpriteShader &shader = shState->shaders().lanczos3Sprite;
+             shader.bind();
+-            
++
+             shader.setTexSize(Vec2i(sourceWidthHires, sourceHeightHires));
+             shader.setSpriteMat(p->trans.getMatrix());
+             shader.applyViewportProj();
+             base = &shader;
+         }
+             break;
++#endif
+ #ifdef MKXPZ_SSL
+         case xBRZ:
+         {
+@@ -1104,18 +1141,29 @@ void Sprite::draw()
+ #endif
+         default:
+         {
+-            SimpleSpriteShader &shader = shState->shaders().simpleSprite;
++            static bool logged_simple = false;
++            if (!logged_simple) {
++                sceClibPrintf("SPRITE_BRANCH_SIMPLE_FIRST\n");
++                logged_simple = true;
++            }
++
++#ifdef MKXP_VITA_MINIMAL_TEST
++            static SimpleSpriteShader shader;
++#else
++            ShaderSet &shaderSet = shState->shaders();
++            SimpleSpriteShader &shader = shaderSet.simpleSprite;
++#endif
+             shader.bind();
+ 
+             shader.setSpriteMat(p->trans.getMatrix());
+             shader.applyViewportProj();
+             base = &shader;
+         }
+-        }        
++        }
+     }
+     
+     glState.blendMode.pushSet(p->blendType);
+-    
++
+     p->bitmap->bindTex(*base, false);
+ 
+ #ifdef MKXPZ_SSL
+@@ -1125,14 +1173,14 @@ void Sprite::draw()
+         shader.setTargetScale(Vec2((float)(shState->config().xbrzScalingFactor), (float)(shState->config().xbrzScalingFactor)));
+     }
+ #endif
+-    
++
+     TEX::setSmooth(scalingMethod == Bilinear);
+ 
+     if (p->wave.active)
+         p->wave.qArray.draw();
+     else
+         p->quad.draw();
+-    
++
+     TEX::setSmooth(false);
+ 
+     glState.blendMode.pop();
+diff --git a/src/display/tilemap-common.h b/src/display/tilemap-common.h
+index 8755932..b468104 100644
+--- a/src/display/tilemap-common.h
++++ b/src/display/tilemap-common.h
+@@ -178,7 +178,12 @@ struct FlashMap
+ 		GLMeta::vaoBind(vao);
+ 		glState.blendMode.pushSet(BlendAddition);
+ 
++#ifdef MKXP_VITA_MINIMAL_TEST
++		static FlashMapShader vitaFlashMapShader;
++		FlashMapShader &shader = vitaFlashMapShader;
++#else
+ 		FlashMapShader &shader = shState->shaders().flashMap;
++#endif
+ 		shader.bind();
+ 		shader.applyViewportProj();
+ 		shader.setAlpha(alpha);
+diff --git a/src/display/tilemapvx.cpp b/src/display/tilemapvx.cpp
+index b4260a5..38e4b24 100644
+--- a/src/display/tilemapvx.cpp
++++ b/src/display/tilemapvx.cpp
+@@ -36,9 +36,37 @@
+ #include "quadarray.h"
+ #include "shader.h"
+ #include "tilemap-common.h"
++#include "vita_perf.h"
+ 
+ #include <vector>
++
++#ifdef MKXP_VITA_MINIMAL_TEST
++#include <psp2/kernel/clib.h>
++extern "C" int vitaTraceBurst;
++#endif
+ #include "sigslot/signal.hpp"
++/* Diagnostic only (MKXP_VITA_TIMELINE / MKXP_VITA_PERF_BITMAP): atlas build span. */
++#include "vita_diag.h"
++
++#ifdef MKXP_VITA_DEBUG_TILESET
++/* Diagnostic only: bitmap slot changes / disposals / atlas rebuilds -> tileset.log. */
++#include <stdio.h>
++#include <stdarg.h>
++static const char *const vitaTsSlot[] = { "A1", "A2", "A3", "A4", "A5", "B", "C", "D", "E" };
++static int vitaTsRebuilds = 0;
++static void vitaTsTmLog(const char *fmt, ...)
++{
++	FILE *f = fopen("ux0:data/ruby_vita_test/tileset.log", "a");
++	if (!f)
++		return;
++	va_list ap;
++	va_start(ap, fmt);
++	vfprintf(f, fmt, ap);
++	va_end(ap);
++	fputc('\n', f);
++	fclose(f);
++}
++#endif
+ 
+ /* Flash tiles pulsing opacity */
+ static const uint8_t flashAlpha[] =
+@@ -53,6 +81,229 @@ static const uint8_t flashAlpha[] =
+ 
+ static elementsN(flashAlpha);
+ 
++#ifdef MKXP_VITA_DUMP_TILEMAP_DRAW
++/*
++ * Vita diagnostic only (OFF by default): for the first drawGround() with groundQuads > 0, log
++ * TilemapVX state, vertex samples, uniforms and GL state, and dump the bound scene framebuffer
++ * before/after the ground DrawElements and after the above DrawElements. Observation only.
++ * Output in ux0:data/ruby_vita_test/: tilemap_draw.log, tilemap_before_ground.tga,
++ * tilemap_after_ground.tga, tilemap_after_above.tga.
++ */
++#include <stdarg.h>
++#include <stdlib.h>
++#include <string.h>
++#include <algorithm>
++
++#define VITA_TM_DIR "ux0:data/ruby_vita_test/"
++
++static bool vitaTmDone = false;
++static bool vitaTmActive = false;
++static int vitaTmAboveCalls = 0;
++
++/* Trigger: Map020 only (17x19x4, FNV-1a 32 of its tile data as computed offline from
++ * Data/Map020.rvdata2). Values are Table::get(x,y,z) in storage order (z, y, x), each int16
++ * fed as two bytes, low byte first. */
++#define VITA_TM_MAP020_W 17
++#define VITA_TM_MAP020_H 19
++#define VITA_TM_MAP020_Z 4
++#define VITA_TM_MAP020_FNV 0x265d8705u
++static bool vitaTmLogStarted = false;
++static bool vitaTmMismatchLogged = false;
++static const Table *vitaTmCheckedTable = NULL;
++
++static void vitaTmLogStart()
++{
++	if (vitaTmLogStarted)
++		return;
++	vitaTmLogStarted = true;
++	FILE *f = fopen(VITA_TM_DIR "tilemap_draw.log", "w");
++	if (f)
++		fclose(f);
++}
++
++static uint32_t vitaTmTableFnv(const Table &t)
++{
++	uint32_t h = 0x811C9DC5u;
++	for (int z = 0; z < t.zSize(); ++z)
++		for (int y = 0; y < t.ySize(); ++y)
++			for (int x = 0; x < t.xSize(); ++x)
++			{
++				uint16_t v = (uint16_t)t.get(x, y, z);
++				h = (h ^ (v & 0xFF)) * 0x01000193u;
++				h = (h ^ (v >> 8)) * 0x01000193u;
++			}
++	return h;
++}
++
++static void vitaTmLog(const char *fmt, ...)
++{
++	FILE *f = fopen(VITA_TM_DIR "tilemap_draw.log", "a");
++	if (!f)
++		return;
++	va_list ap;
++	va_start(ap, fmt);
++	vfprintf(f, fmt, ap);
++	va_end(ap);
++	fputc('\n', f);
++	fclose(f);
++}
++
++/* Uncompressed 32-bit TGA, top-left origin: file row 0 = memory row 0. */
++static int vitaTmWriteTga(const char *name, const uint8_t *rgba, int w, int h, int strideBytes)
++{
++	if (!rgba)
++		return -3;
++	FILE *f = fopen(name, "wb");
++	if (!f)
++		return -1;
++	uint8_t hdr[18];
++	memset(hdr, 0, sizeof(hdr));
++	hdr[2] = 2;
++	hdr[12] = w & 0xff; hdr[13] = (w >> 8) & 0xff;
++	hdr[14] = h & 0xff; hdr[15] = (h >> 8) & 0xff;
++	hdr[16] = 32;
++	hdr[17] = 0x28;
++	int rc = fwrite(hdr, 1, sizeof(hdr), f) == sizeof(hdr) ? 0 : -2;
++	std::vector<uint8_t> row(w * 4);
++	for (int y = 0; y < h && rc == 0; ++y)
++	{
++		const uint8_t *src = rgba + (size_t)y * strideBytes;
++		for (int x = 0; x < w; ++x)
++		{
++			row[x*4+0] = src[x*4+2];
++			row[x*4+1] = src[x*4+1];
++			row[x*4+2] = src[x*4+0];
++			row[x*4+3] = src[x*4+3];
++		}
++		if (fwrite(row.data(), 1, row.size(), f) != row.size())
++			rc = -2;
++	}
++	fclose(f);
++	return rc;
++}
++
++static void vitaTmLogGlState(const char *tag)
++{
++	GLint vp[4] = {0}, sb[4] = {0}, fbo = 0, at = 0, tex = 0, prog = 0, abuf = 0, ebuf = 0;
++	gl.GetIntegerv(GL_VIEWPORT, vp);
++	gl.GetIntegerv(GL_SCISSOR_BOX, sb);
++	gl.GetIntegerv(GL_FRAMEBUFFER_BINDING, &fbo);
++	gl.GetIntegerv(GL_ACTIVE_TEXTURE, &at);
++	gl.GetIntegerv(GL_TEXTURE_BINDING_2D, &tex);
++	gl.GetIntegerv(GL_CURRENT_PROGRAM, &prog);
++	gl.GetIntegerv(GL_ARRAY_BUFFER_BINDING, &abuf);
++	gl.GetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, &ebuf);
++	vitaTmLog("TILEMAP_GL_STATE %s gl_viewport=%d,%d,%d,%d scissor_enabled=%d scissor_box=%d,%d,%d,%d blend=%d "
++	          "framebuffer=0x%x active_texture=0x%x texture_2d=%d program=0x%x array_buffer=0x%x element_buffer=0x%x",
++	          tag, vp[0], vp[1], vp[2], vp[3], (int)glIsEnabled(GL_SCISSOR_TEST), sb[0], sb[1], sb[2], sb[3],
++	          (int)glIsEnabled(GL_BLEND), (unsigned)fbo, (unsigned)at, tex, (unsigned)prog, (unsigned)abuf, (unsigned)ebuf);
++	const IntRect &gv = glState.viewport.get();
++	const IntRect &gs = glState.scissorBox.get();
++	vitaTmLog("TILEMAP_MKXP_STATE %s glState.viewport=%d,%d,%d,%d scissorTest=%d scissorBox=%d,%d,%d,%d blend=%d bound_fbo=%u",
++	          tag, gv.x, gv.y, gv.w, gv.h, (int)glState.scissorTest.get(), gs.x, gs.y, gs.w, gs.h,
++	          (int)glState.blend.get(), (unsigned)FBO::boundFramebufferID.gl);
++}
++
++/* Reads the bound framebuffer (glFinish + glReadPixels) and saves it; also compares with the
++ * memory of its colour attachment texture. Restores the texture binding it touches. */
++static void vitaTmDumpScene(const char *file)
++{
++	GLint fbo = 0, att = 0, prevTex = 0;
++	gl.GetIntegerv(GL_FRAMEBUFFER_BINDING, &fbo);
++	glGetFramebufferAttachmentParameteriv(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, &att);
++	gl.GetIntegerv(GL_TEXTURE_BINDING_2D, &prevTex);
++
++	int w = 544, h = 416;
++	const uint8_t *texmem = NULL;
++	if (att)
++	{
++		gl.BindTexture(GL_TEXTURE_2D, (GLuint)att);
++		SceGxmTexture *gt = vglGetGxmTexture(GL_TEXTURE_2D);
++		if (gt)
++		{
++			w = (int)sceGxmTextureGetWidth(gt);
++			h = (int)sceGxmTextureGetHeight(gt);
++		}
++		texmem = (const uint8_t *)vglGetTexDataPointer(GL_TEXTURE_2D);
++		gl.BindTexture(GL_TEXTURE_2D, (GLuint)prevTex);
++	}
++
++	glFinish();
++	uint8_t *buf = (uint8_t *)malloc((size_t)w * h * 4);
++	int rc = -3;
++	int diffRows = -1;
++	if (buf)
++	{
++		memset(buf, 0, (size_t)w * h * 4);
++		gl.ReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, buf);
++		GLenum e = gl.GetError();
++		char name[160];
++		snprintf(name, sizeof(name), VITA_TM_DIR "%s", file);
++		rc = vitaTmWriteTga(name, buf, w, h, w * 4);
++		if (texmem)
++		{
++			const int stride = ((w + 7) & ~7) * 4;
++			diffRows = 0;
++			for (int y = 0; y < h; ++y)
++				if (memcmp(buf + (size_t)y * w * 4, texmem + (size_t)y * stride, (size_t)w * 4) != 0)
++					++diffRows;
++		}
++		vitaTmLog("TILEMAP_DUMP file=%s framebuffer=0x%x color_attachment_tex=%d size=%dx%d readpixels_err=0x%x "
++		          "READPIXELS_VS_TEXMEM differing_rows=%d rc=%d",
++		          file, (unsigned)fbo, att, w, h, (unsigned)e, diffRows, rc);
++		free(buf);
++	}
++	else
++		vitaTmLog("TILEMAP_DUMP file=%s malloc failed", file);
++}
++
++static void vitaTmLogVerts(const char *tag, const std::vector<SVertex> &v, size_t firstQuad, size_t quads)
++{
++	for (size_t q = firstQuad; q < firstQuad + quads && (q + 1) * 4 <= v.size(); ++q)
++		for (int i = 0; i < 4; ++i)
++		{
++			const SVertex &s = v[q * 4 + i];
++			vitaTmLog("TILEMAP_VERTEX %s quad=%u v=%d pos=%.2f,%.2f tex=%.2f,%.2f",
++			          tag, (unsigned)q, i, s.pos.x, s.pos.y, s.texPos.x, s.texPos.y);
++		}
++}
++
++static void vitaTmLogBounds(const char *tag, const std::vector<SVertex> &v)
++{
++	if (v.empty())
++	{
++		vitaTmLog("TILEMAP_BOUNDS %s vertices=0", tag);
++		return;
++	}
++	float px0 = v[0].pos.x, px1 = px0, py0 = v[0].pos.y, py1 = py0;
++	float tx0 = v[0].texPos.x, tx1 = tx0, ty0 = v[0].texPos.y, ty1 = ty0;
++	for (size_t i = 1; i < v.size(); ++i)
++	{
++		const SVertex &s = v[i];
++		px0 = std::min(px0, s.pos.x);
++		px1 = std::max(px1, s.pos.x);
++		py0 = std::min(py0, s.pos.y);
++		py1 = std::max(py1, s.pos.y);
++		tx0 = std::min(tx0, s.texPos.x);
++		tx1 = std::max(tx1, s.texPos.x);
++		ty0 = std::min(ty0, s.texPos.y);
++		ty1 = std::max(ty1, s.texPos.y);
++	}
++	vitaTmLog("TILEMAP_BOUNDS %s vertices=%u pos_x=%.2f..%.2f pos_y=%.2f..%.2f tex_x=%.2f..%.2f tex_y=%.2f..%.2f",
++	          tag, (unsigned)v.size(), px0, px1, py0, py1, tx0, tx1, ty0, ty1);
++}
++
++#define VITA_TM_GROUND_BEFORE(shaderName, shaderPtr) vitaTmGroundBefore(shaderName, shaderPtr)
++#define VITA_TM_GROUND_AFTER() vitaTmGroundAfter()
++#define VITA_TM_ABOVE_BEFORE(shaderPtr) vitaTmAboveBefore(shaderPtr)
++#define VITA_TM_ABOVE_AFTER() vitaTmAboveAfter()
++#else
++#define VITA_TM_GROUND_BEFORE(shaderName, shaderPtr)
++#define VITA_TM_GROUND_AFTER()
++#define VITA_TM_ABOVE_BEFORE(shaderPtr)
++#define VITA_TM_ABOVE_AFTER()
++#endif
++
+ struct TilemapVXPrivate : public ViewportElement, TileAtlasVX::Reader
+ {
+ 	Bitmap *bitmaps[BM_COUNT];
+@@ -186,6 +437,10 @@ struct TilemapVXPrivate : public ViewportElement, TileAtlasVX::Reader
+ 
+ 	void atlasDisposal(int i)
+ 	{
++#ifdef MKXP_VITA_DEBUG_TILESET
++		vitaTsTmLog("TS_SLOT_DISPOSED tilemap=%p slot=%s bmp=%p atlasDirty_before=%d",
++		            (void *)this, vitaTsSlot[i], (void *)bitmaps[i], (int)atlasDirty);
++#endif
+ 		// Guard against deleted bitmaps
+ 		bitmaps[i] = 0;
+ 		
+@@ -199,8 +454,42 @@ struct TilemapVXPrivate : public ViewportElement, TileAtlasVX::Reader
+ 
+ 	void rebuildAtlas()
+ 	{
++		VITA_PERF_SCOPE(ATLAS_REBUILD);
++		VITA_PERF_COUNT(ATLAS_REBUILDS);
++#ifdef MKXP_VITA_MINIMAL_TEST
++		sceClibPrintf("VITA_TRACE before TileAtlasVX::build\n");
++#endif
++#ifdef MKXP_VITA_ATLAS_FRESH_TEX
++		/*
++		 * Fix (Vita): build every atlas into a fresh texture/FBO. Rebuilding the one already sampled by
++		 * earlier frames fails on vitaGL: the shadow-set glTexSubImage2D in TileAtlasVX::build
++		 * copy-on-writes the texture to new memory (it was used within FRAME_PURGE_FREQ frames), while
++		 * the FBO keeps rendering into the old memory. The new tiles never reach the sampled texture
++		 * (proven: atlas A5 region == previous A5 source, tileset.log). A new texture has never been
++		 * used, so no copy-on-write happens, exactly like the first build that always works.
++		 */
++		shState->releaseAtlasTex(atlas);
++		shState->requestAtlasTex(ATLASVX_W, ATLASVX_H, atlas);
++#endif
++#ifdef MKXP_VITA_DEBUG_TILESET
++		vitaTsTmLog("TS_REBUILD tilemap=%p rebuild=%d atlas_tex=%u slots=%p,%p,%p,%p,%p,%p,%p,%p,%p",
++		            (void *)this, vitaTsRebuilds++, (unsigned)atlas.tex.gl,
++		            (void *)bitmaps[0], (void *)bitmaps[1], (void *)bitmaps[2], (void *)bitmaps[3], (void *)bitmaps[4],
++		            (void *)bitmaps[5], (void *)bitmaps[6], (void *)bitmaps[7], (void *)bitmaps[8]);
++#endif
++#ifdef MKXP_VITA_DIAG
++		const uint64_t vitaDiagT0 = vitaDiagNow();
++#endif
+ 		TileAtlasVX::build(atlas, bitmaps);
+-
++#ifdef MKXP_VITA_DIAG
++		vitaDiagSpan(VD_ATLAS_BUILD, vitaDiagT0, 0, nullptr);
++#endif
++#ifdef MKXP_VITA_MINIMAL_TEST
++		sceClibPrintf("VITA_TRACE after TileAtlasVX::build\n");
++		vitaTraceBurst = 10;
++#endif
++
++#ifndef MKXP_VITA_MINIMAL_TEST
+ 		if (shState->config().dumpAtlas)
+ 		{
+ 			Debug() << "Dumping tile atlas...";
+@@ -217,6 +506,7 @@ struct TilemapVXPrivate : public ViewportElement, TileAtlasVX::Reader
+ 
+ 			Debug() << "Tile atlas dump completed.";
+ 		}
++#endif
+ 	}
+ 
+ 	void updateMapViewport()
+@@ -256,6 +546,9 @@ struct TilemapVXPrivate : public ViewportElement, TileAtlasVX::Reader
+ 		if (!mapData)
+ 			return;
+ 
++		VITA_PERF_SCOPE(TILEMAP_REBUILD);
++		VITA_PERF_COUNT(TILEMAP_REBUILDS);
++
+ 		groundVert.clear();
+ 		aboveVert.clear();
+ 
+@@ -287,6 +580,8 @@ struct TilemapVXPrivate : public ViewportElement, TileAtlasVX::Reader
+ 		if (!mapData)
+ 			return;
+ 
++		VITA_PERF_SCOPE(TILEMAP_PREPARE);
++
+ 		if (atlasDirty)
+ 		{
+ 			rebuildAtlas();
+@@ -319,31 +614,173 @@ struct TilemapVXPrivate : public ViewportElement, TileAtlasVX::Reader
+ 	/* SceneElement */
+ 	void draw()
+ 	{
++		static bool logged_first_tilemap = false;
++		if (!logged_first_tilemap) {
++			FILE *f = fopen("ux0:data/ruby_vita_test/qa.log", "a");
++			if (f) { fprintf(f, "FIRST_TILEMAP_DRAW\n"); fclose(f); }
++			logged_first_tilemap = true;
++		}
+ 		drawGround();
+ 		drawFlashLayer();
+ 	}
+ 
++#ifdef MKXP_VITA_DUMP_TILEMAP_DRAW
++	/* Checked only until the capture happens, and once per map data table. */
++	bool vitaTmIsMap020()
++	{
++		if (!mapData || mapData->xSize() != VITA_TM_MAP020_W || mapData->ySize() != VITA_TM_MAP020_H ||
++		    mapData->zSize() != VITA_TM_MAP020_Z)
++			return false;
++		if (mapData == vitaTmCheckedTable)
++			return false;
++		vitaTmCheckedTable = mapData;
++
++		uint32_t sum = vitaTmTableFnv(*mapData);
++		bool match = sum == VITA_TM_MAP020_FNV;
++		if (match || !vitaTmMismatchLogged)
++		{
++			vitaTmLogStart();
++			vitaTmLog("TILEMAP_TRIGGER map_size=%dx%dx%d checksum=0x%08x expected=0x%08x match=%d",
++			          mapData->xSize(), mapData->ySize(), mapData->zSize(), (unsigned)sum,
++			          (unsigned)VITA_TM_MAP020_FNV, (int)match);
++			if (!match)
++				vitaTmMismatchLogged = true;
++		}
++		return match;
++	}
++
++	void vitaTmGroundBefore(const char *shaderName, ShaderBase *shader)
++	{
++		if (vitaTmDone || vitaTmActive || groundQuads == 0)
++			return;
++		if (!vitaTmIsMap020())
++			return;
++		vitaTmActive = true;
++
++		vitaTmLogStart();
++
++		vitaTmLog("TILEMAP_DRAW_BEGIN");
++		vitaTmLog("groundQuads=%u", (unsigned)groundQuads);
++		vitaTmLog("aboveQuads=%u", (unsigned)aboveQuads);
++		vitaTmLog("dispPos=%d,%d", dispPos.x, dispPos.y);
++		vitaTmLog("mapViewport=%d,%d,%d,%d", mapViewp.x, mapViewp.y, mapViewp.w, mapViewp.h);
++		vitaTmLog("sceneGeo.rect=%d,%d,%d,%d sceneGeo.orig=%d,%d origin=%d,%d",
++		          sceneGeo.rect.x, sceneGeo.rect.y, sceneGeo.rect.w, sceneGeo.rect.h,
++		          sceneGeo.orig.x, sceneGeo.orig.y, origin.x, origin.y);
++		vitaTmLog("atlas_tex=%u atlas_fbo=%u atlas_size=%dx%d hires=%s", (unsigned)atlas.tex.gl, (unsigned)atlas.fbo.gl,
++		          atlas.width, atlas.height, atlas.selfHires ? "yes" : "no");
++		vitaTmLog("scene_fbo=%u (FBO::boundFramebufferID) vbo=%u allocQuads=%u vbo_bytes=%u",
++		          (unsigned)FBO::boundFramebufferID.gl, (unsigned)vbo.gl, (unsigned)allocQuads,
++		          (unsigned)(allocQuads * 4 * sizeof(SVertex)));
++		vitaTmLog("ground_shader=%s above_shader=%s",
++		          shaderName, aboveQuads ? "SimpleShader(static vitaAboveSimpleShader)" : "(none, aboveQuads=0)");
++		vitaTmLog("vertex_source=CPU groundVert/aboveVert (the exact arrays passed to VBO::uploadSubData; the VBO is not mapped)");
++
++		vitaTmLogBounds("ground", groundVert);
++		vitaTmLogBounds("above", aboveVert);
++		vitaTmLogVerts("ground", groundVert, 0, 3);
++		if (groundQuads > 5)
++			vitaTmLogVerts("ground", groundVert, groundQuads - 2, 2);
++		vitaTmLogVerts("above", aboveVert, 0, 2);
++
++		const Vec2i &proj = shader->projMat.get();
++		vitaTmLog("TILEMAP_UNIFORMS ground projection=%dx%d translation=%d,%d texSize=%dx%d texSizeInv=%.8f,%.8f aniOffset=%.2f,%.2f",
++		          proj.x, proj.y, dispPos.x, dispPos.y, atlas.width, atlas.height,
++		          1.f / atlas.width, 1.f / atlas.height, aniOffset.x, aniOffset.y);
++
++		vitaTmLogGlState("ground");
++		vitaTmLog("TILEMAP_GL_CHECK before_ground err=0x%x", (unsigned)gl.GetError());
++
++		vitaTmDumpScene("tilemap_before_ground.tga");
++		vitaTmLog("TILEMAP_GROUND_DRAW_BEGIN");
++	}
++
++	void vitaTmGroundAfter()
++	{
++		if (!vitaTmActive || vitaTmAboveCalls != 0)
++			return;
++		vitaTmLog("TILEMAP_GROUND_DRAW_END err=0x%x", (unsigned)gl.GetError());
++		vitaTmDumpScene("tilemap_after_ground.tga");
++		if (aboveQuads == 0)
++		{
++			vitaTmLog("TILEMAP_ABOVE skipped: aboveQuads=0");
++			vitaTmLog("TILEMAP_DRAW_END");
++			vitaTmActive = false;
++			vitaTmDone = true;
++		}
++		else
++			vitaTmAboveCalls = 1; /* wait for this frame's drawAbove() */
++	}
++
++	void vitaTmAboveBefore(ShaderBase *shader)
++	{
++		if (!vitaTmActive || vitaTmAboveCalls != 1)
++			return;
++		const Vec2i &proj = shader->projMat.get();
++		vitaTmLog("TILEMAP_UNIFORMS above projection=%dx%d translation=%d,%d texSize=%dx%d texSizeInv=%.8f,%.8f",
++		          proj.x, proj.y, dispPos.x, dispPos.y, atlas.width, atlas.height,
++		          1.f / atlas.width, 1.f / atlas.height);
++		vitaTmLogGlState("above");
++		vitaTmLog("TILEMAP_GL_CHECK before_above err=0x%x", (unsigned)gl.GetError());
++		vitaTmLog("TILEMAP_ABOVE_DRAW_BEGIN");
++	}
++
++	void vitaTmAboveAfter()
++	{
++		if (!vitaTmActive || vitaTmAboveCalls != 1)
++			return;
++		vitaTmLog("TILEMAP_ABOVE_DRAW_END err=0x%x", (unsigned)gl.GetError());
++		vitaTmDumpScene("tilemap_after_above.tga");
++		vitaTmLog("TILEMAP_DRAW_END");
++		vitaTmAboveCalls = 2;
++		vitaTmActive = false;
++		vitaTmDone = true;
++	}
++#endif
++
+ 	void drawGround()
+ 	{
+ 		if (groundQuads == 0)
+ 			return;
+ 
++		VITA_PERF_SCOPE(TILEMAP_DRAW);
++		VITA_PERF_COUNT(TILEMAP_DRAWS);
++
+ 		ShaderBase *shader;
++#ifdef MKXP_VITA_DUMP_TILEMAP_DRAW
++		const char *vitaTmGroundShader = "?";
++#endif
+ 
+ 		if (!nullOrDisposed(bitmaps[BM_A1]))
+ 		{
+ 			/* Animated tileset */
++#ifdef MKXP_VITA_MINIMAL_TEST
++			static TilemapVXShader vitaTilemapVXShader;
++			TilemapVXShader &tmShader = vitaTilemapVXShader;
++#else
+ 			TilemapVXShader &tmShader = shState->shaders().tilemapVX;
++#endif
+ 			tmShader.bind();
+ 			tmShader.setAniOffset(aniOffset);
+ 
+ 			shader = &tmShader;
++#ifdef MKXP_VITA_DUMP_TILEMAP_DRAW
++			vitaTmGroundShader = "TilemapVXShader(static vitaTilemapVXShader)";
++#endif
+ 		}
+ 		else
+ 		{
+ 			/* Static tileset */
++#ifdef MKXP_VITA_MINIMAL_TEST
++			static SimpleShader vitaGroundSimpleShader;
++			shader = &vitaGroundSimpleShader;
++#else
+ 			shader = &shState->shaders().simple;
++#endif
+ 			shader->bind();
++#ifdef MKXP_VITA_DUMP_TILEMAP_DRAW
++			vitaTmGroundShader = "SimpleShader(static vitaGroundSimpleShader)";
++#endif
+ 		}
+ 
+ 		shader->setTexSize(Vec2i(atlas.width, atlas.height));
+@@ -358,8 +795,12 @@ struct TilemapVXPrivate : public ViewportElement, TileAtlasVX::Reader
+ 		}
+ 		GLMeta::vaoBind(vao);
+ 
++		VITA_TM_GROUND_BEFORE(vitaTmGroundShader, shader);
++
+ 		gl.DrawElements(GL_TRIANGLES, groundQuads*6, _GL_INDEX_TYPE, 0);
+ 
++		VITA_TM_GROUND_AFTER();
++
+ 		GLMeta::vaoUnbind(vao);
+ 	}
+ 
+@@ -368,7 +809,15 @@ struct TilemapVXPrivate : public ViewportElement, TileAtlasVX::Reader
+ 		if (aboveQuads == 0)
+ 			return;
+ 
++		VITA_PERF_SCOPE(TILEMAP_DRAW);
++		VITA_PERF_COUNT(TILEMAP_DRAWS);
++
++#ifdef MKXP_VITA_MINIMAL_TEST
++		static SimpleShader vitaAboveSimpleShader;
++		SimpleShader &shader = vitaAboveSimpleShader;
++#else
+ 		SimpleShader &shader = shState->shaders().simple;
++#endif
+ 		shader.bind();
+ 		shader.setTexSize(Vec2i(atlas.width, atlas.height));
+ 		shader.applyViewportProj();
+@@ -382,9 +831,13 @@ struct TilemapVXPrivate : public ViewportElement, TileAtlasVX::Reader
+ 		}
+ 		GLMeta::vaoBind(vao);
+ 
++		VITA_TM_ABOVE_BEFORE(&shader);
++
+ 		gl.DrawElements(GL_TRIANGLES, aboveQuads*6, _GL_INDEX_TYPE,
+ 		                (GLvoid*) (groundQuads*6*sizeof(index_t)));
+ 
++		VITA_TM_ABOVE_AFTER();
++
+ 		GLMeta::vaoUnbind(vao);
+ 	}
+ 
+@@ -425,6 +878,11 @@ void TilemapVX::BitmapArray::set(int i, Bitmap *bitmap)
+ 	if (i < 0 || i >= BM_COUNT)
+ 		return;
+ 
++#ifdef MKXP_VITA_DEBUG_TILESET
++	vitaTsTmLog("TS_SLOT_SET tilemap=%p slot=%s old=%p new=%p same=%d new_disposed=%d atlasDirty_before=%d",
++	            (void *)p, vitaTsSlot[i], (void *)p->bitmaps[i], (void *)bitmap, (int)(p->bitmaps[i] == bitmap),
++	            bitmap ? (int)bitmap->isDisposed() : -1, (int)p->atlasDirty);
++#endif
+ 	if (p->bitmaps[i] == bitmap)
+ 		return;
+ 
+diff --git a/src/display/viewport.cpp b/src/display/viewport.cpp
+index 29b3219..c01e36e 100644
+--- a/src/display/viewport.cpp
++++ b/src/display/viewport.cpp
+@@ -117,8 +117,14 @@ Viewport::Viewport()
+     : SceneElement(*shState->screen()),
+       sceneLink(this)
+ {
++#ifdef MKXP_VITA_MINIMAL_TEST
++	/* Build Vita di test: niente Graphics; risoluzione RGSS3 fissa,
++	 * come il resto del percorso Vita (FBO scena 544x416). */
++	initViewport(0, 0, 544, 416);
++#else
+ 	const Graphics &graphics = shState->graphics();
+ 	initViewport(0, 0, graphics.width(), graphics.height());
++#endif
+ }
+ 
+ void Viewport::initViewport(int x, int y, int width, int height)
+diff --git a/src/display/windowvx.cpp b/src/display/windowvx.cpp
+index 9191548..aaba08f 100644
+--- a/src/display/windowvx.cpp
++++ b/src/display/windowvx.cpp
+@@ -32,9 +32,23 @@
+ #include "glstate.h"
+ #include "shader.h"
+ 
++#include <psp2/kernel/processmgr.h>
++#include "../../../samples/common/debugScreen.h"
++
+ #include <limits>
+ #include <algorithm>
+ #include "sigslot/signal.hpp"
++#include "vita_perf.h"
++/* Diagnostic only (MKXP_VITA_TIMELINE / MKXP_VITA_PERF_BITMAP): base redraw counter. */
++#include "vita_diag.h"
++
++/* Vita diagnostic prints of the WindowVX render path (MKXP_VITA_WINDOW_DEBUG_PRINTS, OFF by default).
++ * With the define every WVX_DEBUG_PRINTF is the former psvDebugScreenPrintf call. */
++#ifdef MKXP_VITA_WINDOW_DEBUG_PRINTS
++#define WVX_DEBUG_PRINTF(...) psvDebugScreenPrintf(__VA_ARGS__)
++#else
++#define WVX_DEBUG_PRINTF(...) ((void)0)
++#endif
+ 
+ #define DEF_Z         (rgssVer >= 3 ? 100 :   0)
+ #define DEF_PADDING   (rgssVer >= 3 ?  12 :  16)
+@@ -459,12 +473,18 @@ struct WindowVXPrivate
+ 			i += TileQuads::buildH(borderSrc.b, sideLen.x,       16, corOff.y, &vert[i*4]);
+ 		}
+ 
+-		base.vert.commit();
++		WVX_DEBUG_PRINTF("DBG BASE before commit\n");
++
++base.vert.commit();
++
++WVX_DEBUG_PRINTF("DBG BASE after commit\n");
+ 	}
+ 
+ 	void redrawBaseTex()
+ 	{
+-		if (nullOrDisposed(windowskin))
++	WVX_DEBUG_PRINTF("DBG WVX redrawBaseTex enter\n");
++
++	if (nullOrDisposed(windowskin))
+ 			return;
+ 
+ 		if (base.tex.tex == TEX::ID(0))
+@@ -472,6 +492,8 @@ struct WindowVXPrivate
+ 
+ 		FBO::bind(base.tex.fbo);
+ 
++WVX_DEBUG_PRINTF("DBG WVX after FBO bind\n");
++
+ 		/* Clear texture */
+ 		glState.clearColor.pushSet(Vec4());
+ 		FBO::clear();
+@@ -482,11 +504,25 @@ struct WindowVXPrivate
+ 
+ 		ShaderBase *shader;
+ 
++                #ifdef MKXP_VITA_MINIMAL_TEST
++static SimpleShader vitaSimpleShader;
++SimpleShader &simpleShader = vitaSimpleShader;
++#else
++SimpleShader &simpleShader = shState->shaders().simple;
++#endif
++
+ 		if (backOpacity < 255 || tone->hasEffect())
+ 		{
+-			PlaneShader &planeShader = shState->shaders().plane;
++			#ifdef MKXP_VITA_MINIMAL_TEST
++    static PlaneShader vitaPlaneShader;
++    PlaneShader &planeShader = vitaPlaneShader;
++#else
++    PlaneShader &planeShader = shState->shaders().plane;
++#endif
+ 			planeShader.bind();
+ 
++WVX_DEBUG_PRINTF("DBG WVX plane shader bound\n");
++
+ 			planeShader.setColor(Vec4());
+ 			planeShader.setFlash(Vec4());
+ 			planeShader.setTone(tone->norm);
+@@ -494,17 +530,24 @@ struct WindowVXPrivate
+ 
+ 			shader = &planeShader;
+ 		}
+-		else
+-		{
+-			shader = &shState->shaders().simple;
+-			shader->bind();
+-		}
++	        else
++{
++    shader = &simpleShader;
++    shader->bind();
++    
++   WVX_DEBUG_PRINTF("DBG WVX draw shader bound\n");
++}
+ 
+ 		windowskin->bindTex(*shader);
+ 		TEX::setSmooth(true);
+ 
+ 		shader->setTranslation(Vec2i());
+-		shader->applyViewportProj();
++
++#ifdef MKXP_VITA_MINIMAL_TEST
++shader->projMat.set(Vec2i(base.tex.width, base.tex.height));
++#else
++shader->applyViewportProj();
++#endif
+ 
+ 		/* Draw stretched layer */
+ 		base.vert.draw(0, 1);
+@@ -518,14 +561,20 @@ struct WindowVXPrivate
+ 		glState.blendMode.set(BlendNormal);
+ 
+ 		/* If we used plane shader before, switch to simple */
+-		if (shader != &shState->shaders().simple)
+-		{
+-			shader = &shState->shaders().simple;
+-			shader->bind();
+-			shader->setTranslation(Vec2i());
+-			shader->applyViewportProj();
+-			windowskin->bindTex(*shader);
+-		}
++if (shader != &simpleShader)
++{
++    shader = &simpleShader;
++    shader->bind();
++shader->setTranslation(Vec2i());
++
++#ifdef MKXP_VITA_MINIMAL_TEST
++shader->projMat.set(Vec2i(base.tex.width, base.tex.height));
++#else
++shader->applyViewportProj();
++#endif
++
++windowskin->bindTex(*shader);
++}
+ 
+ 		base.vert.draw(1+base.bgTileQuads, base.borderQuads);
+ 
+@@ -724,61 +773,117 @@ struct WindowVXPrivate
+ 		}
+ 	}
+ 
+-	void prepare()
+-	{
+-		if (base.vertDirty)
+-		{
+-			rebuildBaseVert();
+-			base.vertDirty = false;
+-			base.texDirty = true;
+-		}
++void prepare()
++{
++    VITA_PERF_SCOPE(WINDOW_PREPARE);
+ 
+-		if (base.texSizeDirty)
+-		{
+-			updateBaseTexSize();
+-			base.texSizeDirty = false;
+-			base.texDirty = true;
+-		}
++    WVX_DEBUG_PRINTF("DBG WVX prepare enter\n");
+ 
+-		if (base.texDirty)
+-		{
+-			redrawBaseTex();
+-			base.texDirty = false;
+-		}
++    if (base.vertDirty)
++    {
++        WVX_DEBUG_PRINTF("DBG WVX before rebuildBaseVert\n");
+ 
+-		if (clipRectDirty)
+-		{
+-			updateClipRect();
+-			clipRectDirty = false;
+-		}
++        rebuildBaseVert();
+ 
+-		updateChild();
++        WVX_DEBUG_PRINTF("DBG WVX after rebuildBaseVert\n");
+ 
+-		if (ctrlVertDirty)
+-		{
+-			rebuildCtrlVert();
+-			updatePauseQuad();
+-			ctrlVertDirty = false;
+-		}
++        base.vertDirty = false;
++        base.texDirty = true;
++    }
++
++    if (base.texSizeDirty)
++    {
++        WVX_DEBUG_PRINTF("DBG WVX before updateBaseTexSize\n");
++
++        updateBaseTexSize();
++
++        WVX_DEBUG_PRINTF("DBG WVX after updateBaseTexSize\n");
++
++        base.texSizeDirty = false;
++        base.texDirty = true;
++    }
++
++    if (base.texDirty)
++    {
++        WVX_DEBUG_PRINTF("DBG WVX before redrawBaseTex\n");
++
++        VITA_DIAG_COUNT(VD_WIN_BASE_REDRAW);
++        redrawBaseTex();
++
++        WVX_DEBUG_PRINTF("DBG WVX after redrawBaseTex\n");
++
++        base.texDirty = false;
++    }
++
++    if (clipRectDirty)
++    {
++        WVX_DEBUG_PRINTF("DBG WVX before updateClipRect\n");
++
++        updateClipRect();
++
++        WVX_DEBUG_PRINTF("DBG WVX after updateClipRect\n");
++
++        clipRectDirty = false;
++    }
++
++    WVX_DEBUG_PRINTF("DBG WVX before updateChild\n");
++
++    updateChild();
++
++    WVX_DEBUG_PRINTF("DBG WVX after updateChild\n");
++		
++               if (ctrlVertDirty)
++{
++    WVX_DEBUG_PRINTF("DBG WVX before rebuildCtrlVert\n");
++
++    rebuildCtrlVert();
++
++    WVX_DEBUG_PRINTF("DBG WVX after rebuildCtrlVert\n");
++
++    updatePauseQuad();
++
++    WVX_DEBUG_PRINTF("DBG WVX after updatePauseQuad\n");
++
++    ctrlVertDirty = false;
++}
+ 
+ 		if (ctrlVertArrayDirty)
+-		{
+-			ctrlVert.commit();
+-			ctrlVertArrayDirty = false;
+-		}
++{
++    WVX_DEBUG_PRINTF("DBG WVX before ctrlVert.commit\n");
++
++    ctrlVert.commit();
++
++    WVX_DEBUG_PRINTF("DBG WVX after ctrlVert.commit\n");
++
++    ctrlVertArrayDirty = false;
++}
+ 
+ 		if (cursorVertDirty)
+-		{
+-			rebuildCursorVert();
+-			updateCursorAlpha();
+-			cursorVertDirty = false;
+-		}
++{
++    WVX_DEBUG_PRINTF("DBG WVX before rebuildCursorVert\n");
++
++    rebuildCursorVert();
++
++    WVX_DEBUG_PRINTF("DBG WVX after rebuildCursorVert\n");
++
++    updateCursorAlpha();
++
++    WVX_DEBUG_PRINTF("DBG WVX after updateCursorAlpha\n");
++
++    cursorVertDirty = false;
++}
+ 
+ 		if (cursorVertArrayDirty)
+-		{
+-			cursorVert.commit();
+-			cursorVertArrayDirty = false;
+-		}
++{
++    WVX_DEBUG_PRINTF("DBG WVX before cursorVert.commit\n");
++
++    cursorVert.commit();
++
++    WVX_DEBUG_PRINTF("DBG WVX after cursorVert.commit\n");
++
++    cursorVertArrayDirty = false;
++}
++WVX_DEBUG_PRINTF("DBG WVX prepare exit\n");
+ 	}
+ 
+ 	void draw()
+@@ -791,10 +896,20 @@ struct WindowVXPrivate
+ 
+ 		Vec2i trans = geo.pos() + sceneOffset;
+ 
+-		SimpleAlphaShader &shader = shState->shaders().simpleAlpha;
+-		shader.bind();
+-		shader.applyViewportProj();
++		#ifdef MKXP_VITA_MINIMAL_TEST
++static SimpleAlphaShader vitaSimpleAlphaShader;
++SimpleAlphaShader &shader = vitaSimpleAlphaShader;
++#else
++SimpleAlphaShader &shader = shState->shaders().simpleAlpha;
++#endif
+ 
++shader.bind();
++
++#ifdef MKXP_VITA_MINIMAL_TEST
++shader.projMat.set(Vec2i(544, 416));
++#else
++shader.applyViewportProj();
++#endif
+ 		if (windowskinValid)
+ 		{
+ 			shader.setTranslation(trans);
+@@ -1187,6 +1302,15 @@ void WindowVX::initDynAttribs()
+ 
+ void WindowVX::draw()
+ {
++	VITA_PERF_SCOPE(WINDOW_DRAW);
++	VITA_PERF_COUNT(WINDOW_DRAWS);
++
++	static bool logged_first_window = false;
++	if (!logged_first_window) {
++		FILE *f = fopen("ux0:data/ruby_vita_test/qa.log", "a");
++		if (f) { fprintf(f, "FIRST_WINDOW_DRAW\n"); fclose(f); }
++		logged_first_window = true;
++	}
+ 	p->draw();
+ }
+ 
+diff --git a/src/etc/etc.cpp b/src/etc/etc.cpp
+index 5af7739..7b62c4b 100644
+--- a/src/etc/etc.cpp
++++ b/src/etc/etc.cpp
+@@ -176,6 +176,12 @@ bool Tone::operator==(const Tone &o) const
+ 
+ void Tone::set(double red, double green, double blue, double gray)
+ {
++#ifdef MKXP_VITA_TONE_CHANGE_ONLY
++	/* Vita perf fix: Window_Base#update_tone sets the same tone every frame; valueChanged made every
++	 * WindowVX redraw its base texture (one FBO scene each) every frame. Notify real changes only. */
++	if (this->red == red && this->green == green && this->blue == blue && this->gray == gray)
++		return;
++#endif
+ 	this->red   = red;
+ 	this->green = green;
+ 	this->blue  = blue;
+@@ -187,6 +193,10 @@ void Tone::set(double red, double green, double blue, double gray)
+ 
+ const Tone& Tone::operator=(const Tone &o)
+ {
++#ifdef MKXP_VITA_TONE_CHANGE_ONLY
++	if (red == o.red && green == o.green && blue == o.blue && gray == o.gray)
++		return o;
++#endif
+ 	red   = o.red;
+ 	green = o.green;
+ 	blue  = o.blue;
+@@ -200,6 +210,10 @@ const Tone& Tone::operator=(const Tone &o)
+ 
+ void Tone::setRed(double value)
+ {
++#ifdef MKXP_VITA_TONE_CHANGE_ONLY
++	if (red == value)
++		return;
++#endif
+ 	red = value;
+ 	norm.x = (float) clamp<double>(value, -255, 255) / 255;
+ 
+@@ -208,6 +222,10 @@ void Tone::setRed(double value)
+ 
+ void Tone::setGreen(double value)
+ {
++#ifdef MKXP_VITA_TONE_CHANGE_ONLY
++	if (green == value)
++		return;
++#endif
+ 	green = value;
+ 	norm.y = (float) clamp<double>(value, -255, 255) / 255;
+ 
+@@ -216,6 +234,10 @@ void Tone::setGreen(double value)
+ 
+ void Tone::setBlue(double value)
+ {
++#ifdef MKXP_VITA_TONE_CHANGE_ONLY
++	if (blue == value)
++		return;
++#endif
+ 	blue = value;
+ 	norm.z = (float) clamp<double>(value, -255, 255) / 255;
+ 
+@@ -224,6 +246,10 @@ void Tone::setBlue(double value)
+ 
+ void Tone::setGray(double value)
+ {
++#ifdef MKXP_VITA_TONE_CHANGE_ONLY
++	if (gray == value)
++		return;
++#endif
+ 	gray = value;
+ 	norm.w = (float) clamp<double>(value, 0, 255) / 255;
+ 
+@@ -317,6 +343,11 @@ void Rect::set(int x, int y, int w, int h)
+ 
+ const Rect &Rect::operator=(const Rect &o)
+ {
++#ifdef MKXP_VITA_TONE_CHANGE_ONLY
++	/* Like Rect::set: notify real changes only. */
++	if (x == o.x && y == o.y && width == o.width && height == o.height)
++		return o;
++#endif
+ 	x      = o.x;
+ 	y      = o.y;
+ 	width  = o.width;
+diff --git a/src/sharedstate.h b/src/sharedstate.h
+index 22ef352..02d5b8b 100644
+--- a/src/sharedstate.h
++++ b/src/sharedstate.h
+@@ -53,6 +53,11 @@ struct SharedMidiState;
+ 
+ struct SharedState
+ {
++#ifdef __vita__
++    SharedState();
++    ~SharedState();
++#endif
++
+ 	void *bindingData() const;
+ 	void setBindingData(void *data);
+ 
+@@ -123,7 +128,10 @@ struct SharedState
+ 
+ private:
+ 	SharedState(RGSSThreadData *threadData);
+-	~SharedState();
++
++#ifndef __vita__
++~SharedState();
++#endif
+ 
+ 	SharedStatePrivate *p;
+ };
+diff --git a/src/util/disposable.h b/src/util/disposable.h
+index 5795cf7..e1cc1f7 100644
+--- a/src/util/disposable.h
++++ b/src/util/disposable.h
+@@ -34,16 +34,20 @@ class Disposable
+ {
+ public:
+ 	Disposable()
+-	    : disposed(false),
+-	      link(this)
+-	{
+-		shState->graphics().addDisposable(this);
+-	}
++    : disposed(false),
++      link(this)
++{
++#ifndef MKXP_VITA_MINIMAL_TEST
++    shState->graphics().addDisposable(this);
++#endif
++}
+ 
+ 	virtual ~Disposable()
+-	{
+-		shState->graphics().remDisposable(this);
+-	}
++{
++#ifndef MKXP_VITA_MINIMAL_TEST
++    shState->graphics().remDisposable(this);
++#endif
++}
+ 
+ 	void dispose()
+ 	{
+diff --git a/src/vita_diag.h b/src/vita_diag.h
+new file mode 100644
+index 0000000..3fd282a
+--- /dev/null
++++ b/src/vita_diag.h
+@@ -0,0 +1,96 @@
++/*
++ * Vita-only diagnostics shared by several subsystems (OFF by default, no code when OFF):
++ *
++ *   MKXP_VITA_TIMELINE     one-shot timeline with absolute timestamps for the first boot and for
++ *                          each battle entry (boot_timeline.log / battle_timeline.log);
++ *   MKXP_VITA_PERF_BITMAP  per-120-frame counters (count / time / bytes) appended to the PERF lines.
++ *
++ * Both are fed by the same VITA_DIAG_* calls. Storage and output live in
++ * mkxp_vita_minimal/src/vita_diag.cpp.
++ */
++#ifndef VITA_DIAG_H
++#define VITA_DIAG_H
++
++#if defined(MKXP_VITA_TIMELINE) || defined(MKXP_VITA_PERF_BITMAP)
++#define MKXP_VITA_DIAG 1
++
++#include <stdint.h>
++
++enum VitaDiagOp
++{
++    VD_SCRIPT_EVAL,      /* main.cpp: one Scripts.rvdata2 entry */
++    VD_SHADERSET,        /* SharedState::shaders(): first ShaderSet construction */
++    VD_GL_COMPILE,       /* glCompileShader (gl function table) */
++    VD_GL_LINK,          /* glLinkProgram */
++    VD_GL_TEXIMAGE,      /* glTexImage2D (bytes = w*h*4) */
++    VD_GL_TEXSUBIMAGE,   /* glTexSubImage2D */
++    VD_ATLAS_BUILD,      /* TileAtlasVX::build */
++    VD_PNG_DECODE,       /* Bitmap(filename) PNG decode + texture */
++    VD_BMP_UPLOAD,       /* Bitmap CPU copy -> full texture upload (bytes) */
++    VD_STRETCH_BLT,
++    VD_RADIAL_BLUR,
++    VD_FILL_RECT,
++    VD_GRADIENT,
++    VD_CLEAR,
++    VD_CLEAR_RECT,
++    VD_BLT,
++    VD_DRAW_TEXT,        /* whole Bitmap#draw_text (TTF path) */
++    VD_TEXT_SIZE,
++    VD_TTF_INIT,
++    VD_TTF_OPEN,         /* TTF_OpenFont (cache miss) */
++    VD_TTF_RENDER,       /* TTF_RenderUTF8_Blended (text + outline surfaces) */
++    VD_FONT_HIT,         /* font cache hit (count only) */
++    VD_FRAME_PREPARE,
++    VD_FRAME_COMPOSITE,
++    VD_FRAME_SWAP,
++    VD_WIN_REFRESH,      /* Ruby: Window_Base subclasses #refresh (outermost call only) */
++    VD_WIN_BASE_REDRAW,  /* WindowVX::redrawBaseTex (one FBO scene each) */
++    VD_OP_COUNT
++};
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++uint64_t vitaDiagNow(void);
++/* dt = now - t0; bytes optional; detail is copied (timeline only). */
++void vitaDiagSpan(int op, uint64_t t0, uint64_t bytes, const char *detail);
++void vitaDiagCount(int op);
++/* Timeline events with free-form tags (Ruby hooks, milestones). */
++void vitaDiagMark(const char *tag, const char *detail);
++void vitaDiagNamedSpan(const char *tag, uint64_t t0, const char *detail);
++/* Called once per presented frame (end of vitaRenderFrame), from the main thread. */
++void vitaDiagFrameDone(void);
++#ifdef __cplusplus
++}
++#endif
++
++#define VITA_DIAG_T0(var) const uint64_t var = vitaDiagNow()
++#define VITA_DIAG_SPAN(op, t0, bytes, detail) vitaDiagSpan((op), (t0), (bytes), (detail))
++#define VITA_DIAG_COUNT(op) vitaDiagCount(op)
++#define VITA_DIAG_MARK(tag, detail) vitaDiagMark((tag), (detail))
++
++#ifdef __cplusplus
++/* Times the outermost Bitmap operation only (clear_rect -> fill_rect, blt -> stretch_blt, ...). */
++extern int vitaDiagOpDepth;
++struct VitaDiagOpScope
++{
++    int op;
++    uint64_t t0;
++    bool outer;
++    explicit VitaDiagOpScope(int o) : op(o), t0(vitaDiagNow()), outer(vitaDiagOpDepth++ == 0) {}
++    ~VitaDiagOpScope() { --vitaDiagOpDepth; if (outer) vitaDiagSpan(op, t0, 0, nullptr); }
++};
++#define VITA_DIAG_OP(op) VitaDiagOpScope vitaDiagOpScope_(op)
++#endif
++
++#else
++
++#define VITA_DIAG_T0(var)
++#define VITA_DIAG_SPAN(op, t0, bytes, detail)
++#define VITA_DIAG_COUNT(op)
++#define VITA_DIAG_MARK(tag, detail)
++#define VITA_DIAG_OP(op)
++
++#endif
++
++#endif /* VITA_DIAG_H */
+diff --git a/src/vita_paths.h b/src/vita_paths.h
+new file mode 100644
+index 0000000..b16d2e3
+--- /dev/null
++++ b/src/vita_paths.h
+@@ -0,0 +1,14 @@
++/*
++ * Vita: root directory of the game data (Data/, Graphics/, Fonts/, saves, logs). One definition for
++ * the whole port so a future multi-game runtime only has to change it here (or pass
++ * -DMKXP_VITA_GAME_ROOT="\"ux0:data/<game>/\"" from CMake). Must end with '/'.
++ */
++#ifndef VITA_PATHS_H
++#define VITA_PATHS_H
++
++#ifndef MKXP_VITA_GAME_ROOT
++#define MKXP_VITA_GAME_ROOT "ux0:data/ruby_vita_test/"
++#endif
++#define VITA_GAME_ROOT MKXP_VITA_GAME_ROOT
++
++#endif /* VITA_PATHS_H */
+diff --git a/src/vita_perf.h b/src/vita_perf.h
+new file mode 100644
+index 0000000..f6203d3
+--- /dev/null
++++ b/src/vita_perf.h
+@@ -0,0 +1,69 @@
++/*
++ * Vita-only lightweight profiler hooks (MKXP_VITA_PERF_PROFILE, OFF by default).
++ *
++ * Subsystem timers are inclusive of everything they call; counters count calls made through
++ * mkxp's GL function table (not vitaGL-internal calls). The storage and the 120-frame summary
++ * live in vgl_mkxp_test/sharedstate_test.cpp. Without the define every macro expands to nothing.
++ */
++#ifndef VITA_PERF_H
++#define VITA_PERF_H
++
++#ifdef MKXP_VITA_PERF_PROFILE
++
++#include <psp2/kernel/processmgr.h>
++
++enum VitaPerfSub
++{
++	VITA_PERF_SUB_TILEMAP_PREPARE,  /* TilemapVXPrivate::prepare(), incl. rebuilds below */
++	VITA_PERF_SUB_TILEMAP_REBUILD,  /* TilemapVXPrivate::rebuildBuffers(), incl. VBO upload */
++	VITA_PERF_SUB_ATLAS_REBUILD,    /* TilemapVXPrivate::rebuildAtlas() */
++	VITA_PERF_SUB_SPRITE_PREPARE,   /* SpritePrivate::prepare() */
++	VITA_PERF_SUB_WINDOW_PREPARE,   /* WindowVXPrivate::prepare() */
++	VITA_PERF_SUB_TILEMAP_DRAW,     /* TilemapVXPrivate::drawGround() + drawAbove() */
++	VITA_PERF_SUB_SPRITE_DRAW,      /* Sprite::draw() */
++	VITA_PERF_SUB_WINDOW_DRAW,      /* WindowVX::draw() */
++	VITA_PERF_SUB_COUNT
++};
++
++enum VitaPerfCounter
++{
++	VITA_PERF_CNT_DRAW_ELEMENTS,
++	VITA_PERF_CNT_BLIT_FRAMEBUFFER,
++	VITA_PERF_CNT_TEXTURE_BINDS,
++	VITA_PERF_CNT_PROGRAM_BINDS,
++	VITA_PERF_CNT_FBO_BINDS,
++	VITA_PERF_CNT_BUFFER_DATA,
++	VITA_PERF_CNT_BUFFER_SUBDATA,
++	VITA_PERF_CNT_TEX_IMAGE,
++	VITA_PERF_CNT_TEX_SUBIMAGE,
++	VITA_PERF_CNT_TILEMAP_REBUILDS,
++	VITA_PERF_CNT_ATLAS_REBUILDS,
++	VITA_PERF_CNT_TILEMAP_DRAWS,
++	VITA_PERF_CNT_SPRITE_DRAWS,
++	VITA_PERF_CNT_WINDOW_DRAWS,
++	VITA_PERF_CNT_COUNT
++};
++
++extern SceUInt64 vitaPerfSubUs[VITA_PERF_SUB_COUNT];
++extern unsigned int vitaPerfCounters[VITA_PERF_CNT_COUNT];
++
++struct VitaPerfScope
++{
++	int sub;
++	SceUInt64 t0;
++
++	explicit VitaPerfScope(int s) : sub(s), t0(sceKernelGetProcessTimeWide()) {}
++	~VitaPerfScope() { vitaPerfSubUs[sub] += sceKernelGetProcessTimeWide() - t0; }
++};
++
++#define VITA_PERF_SCOPE(sub) VitaPerfScope vitaPerfScope(VITA_PERF_SUB_##sub)
++#define VITA_PERF_COUNT(cnt) (++vitaPerfCounters[VITA_PERF_CNT_##cnt])
++
++#else
++
++#define VITA_PERF_SCOPE(sub)
++#define VITA_PERF_COUNT(cnt)
++
++#endif
++
++#endif /* VITA_PERF_H */

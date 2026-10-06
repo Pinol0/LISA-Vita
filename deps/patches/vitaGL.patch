@@ -1,0 +1,169 @@
+diff --git a/Makefile b/Makefile
+index fabb381..5f1f84b 100644
+--- a/Makefile
++++ b/Makefile
+@@ -148,6 +148,24 @@ ifeq ($(LOG_ERRORS),1)
+ CFLAGS += -DLOG_ERRORS
+ endif
+ 
++# mkxp Vita: VITA_RT_TEXTURE_TRACKING (render-target textures tracked by the GC) + VGL_APP_LOG
++# (vgl_log -> vgl_app_log() of the application; use with LOG_ERRORS=1).
++ifeq ($(MKXP_DIAG),1)
++CFLAGS += -DVGL_APP_LOG
++endif
++
++# NOT enabled by MKXP_DIAG: tracking render-target textures makes a glTexSubImage2D into a texture
++# that is the active render target in the same frame copy-on-write it away from its FBO (mkxp's
++# TileAtlasVX shadow upload -> empty tilesets, seen on hardware with build d16).
++# mkxp Vita: FBOs without a depth/stencil renderbuffer get no depth surface (see gxm.c).
++ifeq ($(MKXP_NO_FBO_DEPTH),1)
++CFLAGS += -DMKXP_NO_FBO_DEPTH
++endif
++
++ifeq ($(MKXP_RT_TRACK),1)
++CFLAGS += -DVITA_RT_TEXTURE_TRACKING
++endif
++
+ ifeq ($(HAVE_PROFILING),1)
+ CFLAGS += -DHAVE_PROFILING
+ endif
+diff --git a/source/gxm.c b/source/gxm.c
+index 29bf21a..cafdf78 100644
+--- a/source/gxm.c
++++ b/source/gxm.c
+@@ -627,8 +627,23 @@ void scene_reset(void) {
+ 			if (sceGxmColorSurfaceGetData(&active_write_fb->colorbuffer) != active_write_fb->tex->data) {
+ 				_glFramebufferTexture2D(active_write_fb, GL_COLOR_ATTACHMENT0, active_write_fb->tex, 1);
+ 			}
++#if defined(VITA_RT_TEXTURE_TRACKING) && !defined(TEXTURES_SPEEDHACK)
++			// mkxp Vita fix: a texture being rendered into is in use by the GPU exactly like a sampled
++			// one, so its memory must go through the garbage collector if it is freed or reallocated
++			// within FRAME_PURGE_FREQ frames (gpu_free_texture_data only checked sampling).
++			active_write_fb->tex->last_frame = vgl_framecount;
++#endif
+ 			
+ 			// If the depthbuffer is dirty, we re-gen it
++#ifdef MKXP_NO_FBO_DEPTH
++			/* mkxp Vita: a framebuffer with no depth/stencil renderbuffer attached gets no depth surface
++			 * (sceGxmBeginScene accepts NULL). vitaGL gave every FBO one, sized like the colour target
++			 * (8 MiB for mkxp's 1024x2048 tile atlas, rebuilt at every map change), although mkxp never
++			 * enables GL_DEPTH_TEST nor uses stencil and vitaGL writes depth only with the depth test on. */
++			if (active_write_fb->depthbuffer_state == DEPTHBUFFER_MISSING) {
++				active_write_fb->depthbuffer_ptr = NULL;
++			} else
++#endif
+ 			if (!(active_write_fb->depthbuffer_state & DEPTHBUFFER_READY)) {
+ 				init_depth_stencil_buffer(active_write_fb->width, active_write_fb->height, &active_write_fb->depthbuffer, active_write_fb->depthbuffer_state == DEPTHBUFFER_WANTS_STENCIL);
+ 				active_write_fb->depthbuffer_ptr = &active_write_fb->depthbuffer;
+@@ -777,6 +792,15 @@ void vglSwapBuffers(GLboolean has_commondialog) {
+ 
+ 	vgl_framecount++;
+ #if !defined(DISABLE_CIRCULAR_POOL) && !defined(CIRCULAR_POOL_SPEEDHACK)
++#ifdef VGL_APP_LOG
++	/* mkxp Vita diagnostic: peak bytes of the circular vertex pool used in one frame (to size it). */
++	{
++		extern uint32_t vgl_diag_circular_peak;
++		uint32_t used = (uint32_t)circular_data_pool_ptr[vgl_circular_idx] - (uint32_t)circular_data_pool[vgl_circular_idx];
++		if (used > vgl_diag_circular_peak)
++			vgl_diag_circular_peak = used;
++	}
++#endif
+ #ifdef HAVE_DEBUG_INTERFACE
+ 	vgl_circular_pool_frame_peak = (uint32_t)circular_data_pool_ptr[vgl_circular_idx] - (uint32_t)circular_data_pool[vgl_circular_idx];
+ 	if (vgl_circular_pool_frame_peak > vgl_circular_pool_global_peak) {
+diff --git a/source/textures.c b/source/textures.c
+index 7b5d704..ca70ce9 100644
+--- a/source/textures.c
++++ b/source/textures.c
+@@ -983,6 +983,15 @@ static inline __attribute__((always_inline)) void _glTexSubImage2D(texture *tex,
+ #ifndef TEXTURES_SPEEDHACK
+ 	// Copying the texture in a new mem location and dirtying old one
+ 	if (tex->last_frame != OBJ_NOT_USED && (vgl_framecount - tex->last_frame <= FRAME_PURGE_FREQ)) {
++#ifdef VGL_APP_LOG
++		{
++			uint32_t dw, dh;
++			vglGetTexSizes(&tex->gxm_tex, &dw, &dh);
++			if ((uint64_t)dw * dh * 4 >= 4 * 1024 * 1024)
++				vgl_log("TEX_COW %ux%u mip=%d fmt=0x%X sub=%d,%d %dx%d age=%u\n", dw, dh, tex->mip_count,
++				        (unsigned)vglGetTexFormat(&tex->gxm_tex), xoffset, yoffset, width, height, vgl_framecount - tex->last_frame);
++		}
++#endif
+ 		uint32_t size;
+ 		if (tex->mip_count > 1) {
+ 			po2_w = nearest_po2(orig_w);
+diff --git a/source/utils/debug_utils.h b/source/utils/debug_utils.h
+index d289d2c..b93de4c 100644
+--- a/source/utils/debug_utils.h
++++ b/source/utils/debug_utils.h
+@@ -30,7 +30,11 @@ extern "C" {
+ 
+ // Debugging tool
+ char *get_gxm_error_literal(uint32_t code);
+-#ifdef LOG_ERRORS
++#if defined(LOG_ERRORS) && defined(VGL_APP_LOG)
++// mkxp Vita diag: log lines go to a function of the application (a file on ux0:).
++void vgl_app_log(const char *fmt, ...);
++#define vgl_log vgl_app_log
++#elif defined(LOG_ERRORS)
+ #define vgl_log sceClibPrintf
+ #else
+ #define vgl_log(...)
+diff --git a/source/utils/gpu_utils.c b/source/utils/gpu_utils.c
+index 4464db5..87da393 100644
+--- a/source/utils/gpu_utils.c
++++ b/source/utils/gpu_utils.c
+@@ -204,7 +204,11 @@ void *gpu_alloc_mapped_aligned_unsafe_for_gpu(size_t alignment, size_t size) {
+ 	return res;
+ }
+ 
++#ifdef VGL_APP_LOG
++static void *gpu_alloc_mapped_aligned_for_cpu_impl(size_t alignment, size_t size) {
++#else
+ void *gpu_alloc_mapped_aligned_for_cpu(size_t alignment, size_t size) {
++#endif
+ 	void *res = gpu_alloc_mapped_aligned_for_cpu_inner(alignment, size);
+ 	if (res)
+ 		return res;
+@@ -233,7 +237,11 @@ void *gpu_alloc_mapped_aligned_for_cpu(size_t alignment, size_t size) {
+ 	return res;
+ }
+ 
++#ifdef VGL_APP_LOG
++static void *gpu_alloc_mapped_aligned_for_gpu_impl(size_t alignment, size_t size) {
++#else
+ void *gpu_alloc_mapped_aligned_for_gpu(size_t alignment, size_t size) {
++#endif
+ 	void *res = gpu_alloc_mapped_aligned_for_gpu_inner(alignment, size);
+ 	if (res)
+ 		return res;
+@@ -1008,3 +1016,30 @@ void gpu_alloc_planar_texture(uint32_t w, uint32_t h, SceGxmTextureFormat format
+ #endif
+ 	}
+ }
++
++#ifdef VGL_APP_LOG
++/* mkxp Vita diagnostic: every allocation >= 4 MiB is counted and logged (size, pool, caller) so the
++ * application can attribute it to the GL call that triggered it (vgl_diag_bigalloc_count). */
++volatile unsigned int vgl_diag_bigalloc_count = 0;
++volatile unsigned int vgl_diag_bigalloc_last_size = 0;
++uint32_t vgl_diag_circular_peak = 0;
++static void vgl_diag_bigalloc(const char *kind, size_t size, void *res, void *ra) {
++	if (size < 4 * 1024 * 1024)
++		return;
++	vgl_diag_bigalloc_count++;
++	vgl_diag_bigalloc_last_size = size;
++	vgl_log("BIGALLOC %s size=%u pool=%d res=%p vgl_ra=%p free_vram=%u free_ram=%u free_phycont=%u\n", kind, size,
++	        res ? (int)vgl_mem_get_type_by_addr(res) : -1, res, ra, vglMemFree(VGL_MEM_VRAM), vglMemFree(VGL_MEM_RAM),
++	        vglMemFree(VGL_MEM_PHYCONT));
++}
++void *gpu_alloc_mapped_aligned_for_gpu(size_t alignment, size_t size) {
++	void *res = gpu_alloc_mapped_aligned_for_gpu_impl(alignment, size);
++	vgl_diag_bigalloc("for_gpu", size, res, __builtin_return_address(0));
++	return res;
++}
++void *gpu_alloc_mapped_aligned_for_cpu(size_t alignment, size_t size) {
++	void *res = gpu_alloc_mapped_aligned_for_cpu_impl(alignment, size);
++	vgl_diag_bigalloc("for_cpu", size, res, __builtin_return_address(0));
++	return res;
++}
++#endif

@@ -1,0 +1,14 @@
+{
+  "rgssVersion": 3,
+  "defScreenW": 544,
+  "defScreenH": 416,
+  "fixedFramerate": 240,
+  "frameSkip": false,
+  "vsync": false,
+  "syncToRefreshrate": false,
+  "subImageFix": true,
+  "allowSymlinks": true,
+  "preloadScript": ["pc_soak_preload.rb"],
+  "dataPathOrg": "claude-soak",
+  "dataPathApp": "lisa-pc"
+}

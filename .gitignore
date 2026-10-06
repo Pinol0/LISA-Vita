@@ -1,0 +1,36 @@
+# build output
+/build*/
+*.o
+*.a
+*.elf
+*.self
+*.velf
+*.vpk
+
+# fetched / built by deps/setup.sh
+/deps/mkxp-z/
+/deps/vitaGL/
+/deps/ruby/
+
+# host test output
+/tools/hosttests/**/out*/
+/tools/hosttests/**/t
+/tools/hosttests/**/t_*.o
+
+# game files and anything derived from them never go in this repository
+*.rvdata2
+*.rgss3a
+Data/
+Graphics/
+Audio/
+Fonts/
+/tools/ps-icons/IconSet.png
+/tools/ps-icons/preview.png
+
+# LiveArea images (added later)
+/sce_sys/icon0.png
+/sce_sys/livearea/contents/*.png
+/art/
+
+# logs
+*.log

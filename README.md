@@ -72,6 +72,10 @@ The Vita port includes work on:
 
 More information is available in [Technical Notes](docs/TECHNICAL.md).
 
+## Building
+
+See [Building](docs/BUILDING.md).
+
 ## Disclaimer
 
 This is an unofficial fan project and is not affiliated with Dingaling
