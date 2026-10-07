@@ -47,7 +47,8 @@ You must own a legitimate copy of the game and provide the required game
 files yourself:
 
 1. Install the VPK.
-2. Extract the game's `Game.rgss3a` archive (if your copy has one).
+2. Extract the game's `Game.rgss3a` archive (if your copy has one), for example with
+   [rgss3a-extractor](https://github.com/iatsiuk/rgss3a-extractor).
 3. Copy `Data/`, `Graphics/`, `Audio/` and `Fonts/` to `ux0:data/lisa_vita/`.
 
 The first launch pauses for about 10 seconds while the shaders are compiled;
@@ -62,7 +63,7 @@ See the [Installation Guide](docs/INSTALLATION.md) for the details.
 | D-pad or left stick | Move / select |
 | Cross | Confirm |
 | Circle | Cancel / menu |
-| L | Dash |
+| L / R | Previous / next page in menus |
 | Triangle (or R), Square, Cross, Circle | Combo keys W, A, S, D in battle |
 | Right stick up / left / down / right | Combo keys W, A, S, D |
 

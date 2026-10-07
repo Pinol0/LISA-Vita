@@ -13,8 +13,10 @@
 
 1. Install `LISA-Vita-alpha1.vpk` (from the Releases page, or [build it yourself](BUILDING.md)) with
    VitaShell. The app is "Lisa: The Painful" (title ID `LISA00001`).
-2. If your copy of the game has a `Game.rgss3a` archive, extract it first with an RGSS3 archive
-   extractor: the port needs the plain folders. Extract it into the game folder and let its files
+2. If your copy of the game has a `Game.rgss3a` archive, extract it first: the port needs the plain
+   folders. Suggested: [rgss3a-extractor](https://github.com/iatsiuk/rgss3a-extractor)
+   (`python3 rgss3a_extractor.py Game.rgss3a`, any system) or, on Windows,
+   [RGSS-Extractor](https://github.com/KatyushaScarlet/RGSS-Extractor). Extract it into the game folder and let its files
    replace the ones already there (a few images exist in both, and the game uses the archive's).
 3. Copy the game files to `ux0:data/lisa_vita/`:
 
@@ -44,7 +46,7 @@
 | D-pad or left stick | Move / select |
 | Cross | Confirm |
 | Circle | Cancel / menu |
-| L | Dash |
+| L / R | Previous / next page in menus |
 | Triangle (or R), Square, Cross, Circle | Combo keys W, A, S, D in battle |
 | Right stick up / left / down / right | Combo keys W, A, S, D (only the combo keys: it never confirms or cancels) |
 
