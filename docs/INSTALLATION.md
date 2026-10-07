@@ -5,7 +5,9 @@
 ## Requirements
 
 - A PS Vita / PS TV with homebrew enabled (HENkaku / Ensō).
-- Your own copy of LISA: The Painful.
+- Your own copy of LISA: The Painful, **Legacy Edition**: the original RPG Maker VX Ace game, whose
+  folder has `Game.exe`, `Game.rgss3a`, `Audio/`, `Graphics/` and `Fonts/`. The Definitive Edition
+  by Serenity Forge is a Unity game and cannot be used.
 - Recommended: [PSVshell](https://github.com/Electry/PSVshell) with the clocks at
   **500 / 222 / 222 / 166 MHz** (the port has only been tested with this overclock).
 

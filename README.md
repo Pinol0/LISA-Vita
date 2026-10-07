@@ -5,6 +5,10 @@ mkxp-z and the RGSS3 runtime.
 
 > Current status: **Alpha 1** — playable from start to finish on real hardware.
 
+> **Works only with the Legacy Edition** of LISA: The Painful (the original RPG Maker VX Ace
+> game: `Game.exe`, `Game.rgss3a`, `Audio/`, `Graphics/`). The Definitive Edition by Serenity
+> Forge is built with Unity and is **not** supported.
+
 ![Loading screen of the port](boot/loading.png)
 
 ## About
@@ -43,8 +47,8 @@ number of active events.
 
 This repository does **not** contain any LISA: The Painful game assets.
 
-You must own a legitimate copy of the game and provide the required game
-files yourself:
+You must own a legitimate copy of the game (**Legacy Edition**, the RPG Maker VX Ace
+version) and provide the required game files yourself:
 
 1. Install the VPK.
 2. Extract the game's `Game.rgss3a` archive (if your copy has one), for example with

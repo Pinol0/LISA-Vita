@@ -17,6 +17,8 @@
 - **MP3 and MIDI are not supported** (only Ogg Vorbis and WAV): those sounds stay silent.
 - Encrypted archives (`.rgss3a`) are not supported: the game files must be extracted.
 - Only the 544x416 resolution.
+- Only the **Legacy Edition** of LISA: The Painful (RPG Maker VX Ace) works; the Definitive Edition
+  (Unity) is a different program and is not supported.
 - Tested only with **LISA: The Painful**: other RPG Maker VX Ace games may not work.
   Some details are still LISA-specific (bitmap font, fixed folder `ux0:data/lisa_vita/`).
 - `Object#clone` behaves like `dup` (it does not keep the frozen state or singleton methods).
