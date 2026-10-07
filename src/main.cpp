@@ -50,18 +50,12 @@ void vitaRenderFrame();
 #ifdef MKXP_VITA_TEX_PAGING
 extern "C" void vitaTexPagingTick();
 #endif
-#ifdef MKXP_VITA_HANDOFF_BENCH
-extern "C" void vitaHandoffBenchTick(void);
-#endif
 #ifdef MKXP_VITA_BIG_ALLOC
 bool vitaBigAllocInit(unsigned int megabytes);   /* vita-big-alloc.cpp */
 #endif
 #ifdef MKXP_VITA_RENDER_EXC
 #include "exception.h"
 void raiseRbExc(Exception *exc);   /* binding-shim.cpp */
-#endif
-#ifdef MKXP_VITA_HEARTBEAT_LOG
-void vitaHeartbeatMarkNewGame();
 #endif
 
 #ifdef MKXP_VITA_HEAP_MB
@@ -77,8 +71,134 @@ int _newlib_heap_size_user = MKXP_VITA_HEAP_MB * 1024 * 1024;
 #endif
 extern const char module_rpg3[];
 extern "C" void rb_call_builtin_inits(void);
+#ifdef MKXP_VITA_QUIET_BOOT
+#include <cstdarg>
+#include <cstdio>
+#include <png.h>
+#include <psp2/display.h>
+#include <psp2/kernel/sysmem.h>
+#endif
 extern "C" {
 #include "../common/debugScreen.h"
+#ifdef MKXP_VITA_QUIET_BOOT
+/*
+ * Public builds (MKXP_VITA_QUIET_BOOT): a loading screen instead of the boot messages. The screen is
+ * app0:boot/loading.png (960x544, packaged if boot/loading.png exists) or "LISA: The Painful /
+ * Loading..." on black. Every boot message is kept in memory and written once to qa.log (BOOT_LOG)
+ * when the game scripts start; a failure (a message with FAILED / not found / Could not) brings up
+ * the text screen with the whole log, as before, while the boot screen is still the one shown (once
+ * the game draws, errors are the error screen's job).
+ */
+static char gVitaBootLog[16384];
+static size_t gVitaBootLen = 0;
+static bool gVitaBootVerbose = false, gVitaBootText = false, gVitaBootLogged = false;
+static void *gVitaBootFb = nullptr;
+
+static void vitaBootLogToQa(const char *why)
+{
+    if (gVitaBootLogged)
+        return;
+    gVitaBootLogged = true;
+    if (FILE *f = fopen(VITA_GAME_ROOT "qa.log", "a")) {
+        fprintf(f, "BOOT_LOG %s\n%.*sBOOT_LOG end\n", why, (int)gVitaBootLen, gVitaBootLog);
+        fclose(f);
+    }
+}
+
+static bool vitaBootScreenShown()
+{
+    SceDisplayFrameBuf fb;
+    memset(&fb, 0, sizeof(fb));
+    fb.size = sizeof(fb);
+    return gVitaBootFb && sceDisplayGetFrameBuf(&fb, SCE_DISPLAY_SETBUF_NEXTFRAME) >= 0 && fb.base == gVitaBootFb;
+}
+
+static void vitaBootCenter(const char *text, int y)
+{
+    PsvDebugScreenFont *font = psvDebugScreenGetFont();
+    int x = (SCREEN_WIDTH - (int)strlen(text) * font->size_w) / 2;
+    psvDebugScreenSetCoordsXY(&x, &y);
+    psvDebugScreenPuts(text);
+}
+
+/* The loading screen (main(), before vglInit). */
+static void vitaBootScreenStart()
+{
+    png_image img;
+    memset(&img, 0, sizeof(img));
+    img.version = PNG_IMAGE_VERSION;
+    if (png_image_begin_read_from_file(&img, "app0:boot/loading.png")) {
+        img.format = PNG_FORMAT_RGBA;
+        const SceUID blk = img.width == SCREEN_WIDTH && img.height == SCREEN_HEIGHT
+            ? sceKernelAllocMemBlock("boot_screen", SCE_KERNEL_MEMBLOCK_TYPE_USER_CDRAM_RW, 2 * 1024 * 1024, NULL) : -1;
+        void *base = nullptr;
+        if (blk >= 0 && sceKernelGetMemBlockBase(blk, &base) >= 0 &&
+            png_image_finish_read(&img, NULL, base, SCREEN_WIDTH * 4, NULL)) {
+            SceDisplayFrameBuf fb;
+            memset(&fb, 0, sizeof(fb));
+            fb.size = sizeof(fb);
+            fb.base = base;
+            fb.pitch = SCREEN_WIDTH;
+            fb.pixelformat = SCE_DISPLAY_PIXELFORMAT_A8B8G8R8;
+            fb.width = SCREEN_WIDTH;
+            fb.height = SCREEN_HEIGHT;
+            if (sceDisplaySetFrameBuf(&fb, SCE_DISPLAY_SETBUF_NEXTFRAME) >= 0) {
+                gVitaBootFb = base;
+                return;
+            }
+        }
+        png_image_free(&img);
+        if (blk >= 0)
+            sceKernelFreeMemBlock(blk);
+    }
+    psvDebugScreenInit();
+    gVitaBootText = true;
+    SceDisplayFrameBuf fb;
+    memset(&fb, 0, sizeof(fb));
+    fb.size = sizeof(fb);
+    if (sceDisplayGetFrameBuf(&fb, SCE_DISPLAY_SETBUF_NEXTFRAME) >= 0)
+        gVitaBootFb = fb.base;
+    PsvDebugScreenFont *small = psvDebugScreenGetFont();
+    PsvDebugScreenFont *big = psvDebugScreenScaleFont2x(small);
+    if (big)
+        psvDebugScreenSetFont(big);
+    vitaBootCenter("LISA: The Painful", SCREEN_HEIGHT / 2 - 40);
+    psvDebugScreenSetFont(small);
+    vitaBootCenter("Loading...", SCREEN_HEIGHT / 2 + 10);
+}
+
+static int vitaBootPrintf(const char *format, ...)
+{
+    char line[1024];
+    va_list ap;
+    va_start(ap, format);
+    const int n = vsnprintf(line, sizeof(line), format, ap);
+    va_end(ap);
+    if (gVitaBootVerbose)
+        return psvDebugScreenPuts(line);
+    const size_t len = strlen(line);
+    if (gVitaBootLen + len < sizeof(gVitaBootLog)) {
+        memcpy(gVitaBootLog + gVitaBootLen, line, len);
+        gVitaBootLen += len;
+    }
+    if (strstr(line, "FAILED") || strstr(line, "not found") || strstr(line, "Could not")) {
+        vitaBootLogToQa("failed");
+        if (vitaBootScreenShown()) {
+            gVitaBootVerbose = true;
+            if (!gVitaBootText)
+                psvDebugScreenInit();   /* the text screen replaces the loading image */
+            psvDebugScreenPuts("\e[H\e[2J");
+            psvDebugScreenPuts("LISA: The Painful - boot log\n\n");
+            gVitaBootLog[gVitaBootLen] = 0;
+            psvDebugScreenPuts(gVitaBootLog);
+        }
+    } else if (strstr(line, "Running LISA scripts")) {
+        vitaBootLogToQa("ok");
+    }
+    return n;
+}
+#define psvDebugScreenPrintf vitaBootPrintf
+#endif
 
 static VALUE vita_debug_print(VALUE self, VALUE message)
 {
@@ -95,15 +215,6 @@ static VALUE vita_trace_print(VALUE self, VALUE message)
     return Qnil;
 }
 
-#ifdef MKXP_VITA_HEARTBEAT_LOG
-/* Heartbeat: salva solo il contatore dei frame, nessun I/O qui. */
-static VALUE vita_heartbeat_new_game(VALUE self)
-{
-    (void)self;
-    vitaHeartbeatMarkNewGame();
-    return Qnil;
-}
-#endif
 }
 
 /*
@@ -147,7 +258,7 @@ static void vitaApplyCpuClock(const char *why);
 static bool vitaFps30 = false;   /* d59: the user prefers 60; L+R+SELECT switches */
 extern "C" { unsigned int vitaLogicUpdates = 0; }   /* PERF upd= (vita_diag.cpp) */
 #endif
-#if defined(MKXP_VITA_GC_TUNE_L) || defined(MKXP_VITA_GC_MID)
+#ifdef MKXP_VITA_GC_MID
 extern "C" void ruby_gc_set_params(void);   /* gc.c (not in the public headers) */
 extern "C" { int vitaGcTuned = 0; }          /* PERF gc_tune= (vita_diag.cpp): 1 = GC_TUNE_L set, 2 = GC_MID */
 #endif
@@ -173,9 +284,13 @@ static VALUE vita_graphics_update(VALUE self)
             vitaFpsInit = true;
             eglSwapInterval(0, vitaFps30 ? 2 : 1);
         }
+#ifdef MKXP_VITA_NO_DEBUG_KEYS
+        const bool on = false;   /* public build: no test key combos (MKXP_VITA_NO_DEBUG_KEYS) */
+#else
         SceCtrlData vitaFpsPad;
         const unsigned kCombo = SCE_CTRL_LTRIGGER | SCE_CTRL_RTRIGGER | SCE_CTRL_SELECT;
         const bool on = sceCtrlPeekBufferPositive(0, &vitaFpsPad, 1) > 0 && (vitaFpsPad.buttons & kCombo) == kCombo;
+#endif
         if (on && !vitaFpsPrev) {
             vitaFps30 = !vitaFps30;
             eglSwapInterval(0, vitaFps30 ? 2 : 1);
@@ -190,9 +305,10 @@ static VALUE vita_graphics_update(VALUE self)
         }
     }
 #endif
-#ifdef MKXP_VITA_OFFSCREEN_SPRITES
+#if defined(MKXP_VITA_OFFSCREEN_SPRITES) && !defined(MKXP_VITA_NO_DEBUG_KEYS)
     {
-        /* L+R+START toggles the off-screen sprite skip (edge-triggered). */
+        /* L+R+START toggles the off-screen sprite skip (edge-triggered). Test key: not in public
+         * builds (MKXP_VITA_NO_DEBUG_KEYS), where L and R are game buttons. */
         static bool vitaOffPrev = false;
         SceCtrlData vitaOffPad;
         const unsigned kCombo = SCE_CTRL_LTRIGGER | SCE_CTRL_RTRIGGER | SCE_CTRL_START;
@@ -219,10 +335,7 @@ static VALUE vita_graphics_update(VALUE self)
     }
 #endif
 #ifdef MKXP_VITA_TEX_PAGING
-    vitaTexPagingTick();   /* bitmap-vita-minimal.cpp: release idle file-backed textures under GPU memory pressure */
-#endif
-#ifdef MKXP_VITA_HANDOFF_BENCH
-    vitaHandoffBenchTick();   /* vita-handoff-bench.cpp: one thread-handoff benchmark after 1800 updates */
+    vitaTexPagingTick();   /* bitmap-vita.cpp: release idle file-backed textures under GPU memory pressure */
 #endif
 #ifdef MKXP_VITA_RENDER_EXC
     /*
@@ -256,7 +369,7 @@ static VALUE vita_graphics_update(VALUE self)
 }
 
 #ifdef MKXP_VITA_SCREEN_FX
-/* sharedstate_test.cpp (MKXP_VITA_SCREEN_FX). */
+/* sharedstate-vita.cpp (MKXP_VITA_SCREEN_FX). */
 extern "C" void vitaFxSetBrightness(int value);
 extern "C" void vitaFxFreeze(void);
 extern "C" void vitaFxTransition(float prog);
@@ -381,6 +494,10 @@ static int vitaButtonIndex(unsigned int button)
  * pad and holds the Vita binding table.
  */
 static RgssInput::Input vitaRgssInput(60);
+#ifdef MKXP_VITA_ANALOG_INPUT
+#include "vita-analog.h"
+static VitaAnalog::State vitaAnalogState;
+#endif
 
 /* Vita -> RGSS bindings (LISA layout: combo keys W/A/S/D = R/X/Y/Z on PC). Directions first: the
  * table order decides which newly pressed button becomes the repeating one (as upstream). */
@@ -394,6 +511,11 @@ static void vitaInputInitBindings()
         { SCE_CTRL_SQUARE, X },                                /* A key */
         { SCE_CTRL_TRIANGLE, R }, { SCE_CTRL_RTRIGGER, R },    /* W key */
         { SCE_CTRL_LTRIGGER, L }, { SCE_CTRL_LTRIGGER, A }, { SCE_CTRL_LTRIGGER, Shift },  /* dash */
+#ifdef MKXP_VITA_ANALOG_INPUT
+        /* right stick (vita-analog.h): the combo keys only, never C / B */
+        { VitaAnalog::kRightUp, R }, { VitaAnalog::kRightLeft, X },
+        { VitaAnalog::kRightDown, Y }, { VitaAnalog::kRightRight, Z },
+#endif
     });
 }
 
@@ -417,7 +539,15 @@ static VALUE vita_input_update(VALUE self)
     }
     SceCtrlData pad;
     std::memset(&pad, 0, sizeof(pad));
+#ifdef MKXP_VITA_ANALOG_INPUT
+    /* Feature (MKXP_VITA_ANALOG_INPUT): left stick = D-pad, right stick = combo keys (vita-analog.h).
+     * The pad is sampled in SCE_CTRL_MODE_ANALOG since boot. */
+    unsigned int buttons = 0;
+    if (sceCtrlPeekBufferPositive(0, &pad, 1) > 0)
+        buttons = pad.buttons | VitaAnalog::update(vitaAnalogState, pad.lx, pad.ly, pad.rx, pad.ry);
+#else
     const unsigned int buttons = sceCtrlPeekBufferPositive(0, &pad, 1) > 0 ? pad.buttons : 0;
+#endif
     vitaRgssInput.update(buttons);
     VITA_FREEZE_MARK(INPUT_UPDATE_EXIT);
     return Qnil;
@@ -732,14 +862,14 @@ extern "C" void Init_zlib(void);   /* libruby-static.a: ext/zlib */
 #endif
 #ifdef MKXP_VITA_PERF_LITE
 /*
- * Release monitoring (MKXP_VITA_PERF_LITE): appended to each PERF line (sharedstate_test.cpp, once
+ * Release monitoring (MKXP_VITA_PERF_LITE): appended to each PERF line (sharedstate-vita.cpp, once
  * per window, main thread inside Graphics.update): current map, in battle, Ruby GCs of the window
  * (minor/major) and the heap (live slots, pages). A few C calls every 2 s, no Ruby code.
  */
 #ifdef MKXP_VITA_CPU_PAGING
 #include <malloc.h>
 extern "C" void vitaBigAllocStats(unsigned *usedKb, unsigned *freeKb, unsigned *blocks, unsigned *fallbacks);   /* vita-big-alloc.cpp */
-extern "C" void vitaCpuPagingStats(unsigned *dropped, unsigned *droppedKb);   /* bitmap-vita-minimal.cpp */
+extern "C" void vitaCpuPagingStats(unsigned *dropped, unsigned *droppedKb);   /* bitmap-vita.cpp */
 #endif
 extern "C" int vitaPerfLiteAppend(char *buf, int cap)
 {
@@ -774,11 +904,8 @@ extern "C" int vitaPerfLiteAppend(char *buf, int cap)
     return n < 0 ? 0 : (n < cap ? n : cap - 1);
 }
 #endif
-#ifdef MKXP_VITA_SPRITE_FAST_NATIVE
-extern "C" void vitaSpriteFastNativeInit(void);   /* vita-sprite-fast-native.cpp */
-#endif
 #ifdef MKXP_VITA_ANIM_PREFETCH
-extern "C" void vitaAnimPrefetchInit(void);   /* bitmap-vita-minimal.cpp */
+extern "C" void vitaAnimPrefetchInit(void);   /* bitmap-vita.cpp */
 #endif
 #endif
 #ifdef MKXP_VITA_OBJ_HIST
@@ -1043,21 +1170,21 @@ int main()
 #ifdef MKXP_VITA_HEAP_LEDGER
     vitaHeapLedgerInit();   /* diagnostic: from here on the malloc wrappers lock */
 #endif
-#ifdef MKXP_VITA_HEAP_SHIFT_TEST
-    /* Diagnostic only: leaked block shifts later heap allocations like the larger pthread rb_fiber_t. */
-    void *volatile vitaHeapShiftBlock = malloc(16);
-    (void)vitaHeapShiftBlock;
-#endif
     sceClibPrintf("VITA_TRACE main start\n");
 #ifdef MKXP_VITA_FREEZE_PROBE
     vitaFreezeProbeStart();
 #endif
     VITA_DIAG_MARK("main_enter", nullptr);
 
+#ifdef MKXP_VITA_QUIET_BOOT
+    vitaBootScreenStart();
+    psvDebugScreenPrintf("LISA-Vita boot\n\n");
+#else
     psvDebugScreenInit();
 
     psvDebugScreenPrintf("mkxp-z Vita minimal\n");
     psvDebugScreenPrintf("===================\n\n");
+#endif
 
     /*
      * Renderer mkxp-z / vitaGL
@@ -1099,8 +1226,8 @@ int main()
     psvDebugScreenPrintf("GLFunctions OK\n");
 
     /*
-     * GLState: stessa configurazione già funzionante
-     * nel progetto vgl_mkxp_test.
+     * GLState: same configuration as the rendering shell
+     * (src/shell/sharedstate-vita.cpp).
      */
     Config conf;
     conf.defScreenW = 960;
@@ -1131,6 +1258,13 @@ sceCtrlSetSamplingMode(
     RUBY_INIT_STACK;
 
     int result = ruby_setup();
+#ifdef MKXP_VITA_AUDIT_FIXES
+    /* RGSS3 exception classes (binding-shim.cpp), defined before any script as upstream does. */
+    {
+        VALUE vitaRgssErrorClass();
+        vitaRgssErrorClass();
+    }
+#endif
 
     sceClibPrintf("VITA_TRACE after ruby_setup result=%d\n", result);
     VITA_DIAG_MARK("ruby_setup_done", nullptr);
@@ -1150,9 +1284,6 @@ sceCtrlSetSamplingMode(
      */
     Init_zlib();
     rb_provide("zlib.so");
-#endif
-#ifdef MKXP_VITA_SPRITE_FAST_NATIVE
-    vitaSpriteFastNativeInit();
 #endif
 #ifdef MKXP_VITA_ANIM_PREFETCH
     vitaAnimPrefetchInit();
@@ -1184,7 +1315,12 @@ sceCtrlSetSamplingMode(
 #endif
     {
         SceCtrlData vitaGcPad;
+#ifdef MKXP_VITA_NO_DEBUG_KEYS
+        const bool vitaGcDefaults = false;   /* public build: no A/B key at boot */
+        (void)vitaGcPad;
+#else
         const bool vitaGcDefaults = sceCtrlPeekBufferPositive(0, &vitaGcPad, 1) > 0 && (vitaGcPad.buttons & SCE_CTRL_LTRIGGER);
+#endif
         if (!vitaGcDefaults) {
             setenv("RUBY_GC_HEAP_INIT_SLOTS", VITA_GC_INIT_SLOTS, 1);
 #ifdef MKXP_VITA_GC_MAX_RATIO
@@ -1207,32 +1343,6 @@ sceCtrlSetSamplingMode(
         }
     }
 #endif
-#ifdef MKXP_VITA_GC_TUNE_L
-    /*
-     * Test (MKXP_VITA_GC_TUNE_L): L held at boot -> tuned GC parameters, for an A/B comparison in one
-     * build. Embedded Ruby never reads RUBY_GC_* (ruby_gc_set_params() is only called by
-     * ruby_options()), so they are set here and applied right after ruby_setup(), before any script.
-     * More free slots after each GC = fewer minor GCs (d39: 3-12 GCs per 120 frames, 65-180 ms each).
-     */
-    {
-        SceCtrlData vitaGcPad;
-        const bool vitaGcTune = sceCtrlPeekBufferPositive(0, &vitaGcPad, 1) > 0 && (vitaGcPad.buttons & SCE_CTRL_LTRIGGER);
-        if (vitaGcTune) {
-            setenv("RUBY_GC_HEAP_INIT_SLOTS", "400000", 1);
-            setenv("RUBY_GC_HEAP_FREE_SLOTS", "150000", 1);
-            setenv("RUBY_GC_HEAP_FREE_SLOTS_MIN_RATIO", "0.30", 1);
-            setenv("RUBY_GC_HEAP_FREE_SLOTS_GOAL_RATIO", "0.50", 1);
-            setenv("RUBY_GC_MALLOC_LIMIT", "33554432", 1);
-            ruby_gc_set_params();
-            vitaGcTuned = 1;
-        }
-        FILE *f = fopen(VITA_GAME_ROOT "qa.log", "a");
-        if (f) {
-            fprintf(f, "GC_TUNE %s\n", vitaGcTune ? "ON (L held): init_slots=400000 free_slots=150000 min_ratio=0.30 goal_ratio=0.50 malloc_limit=32MiB" : "OFF (defaults)");
-            fclose(f);
-        }
-    }
-#endif
 
 rb_define_global_function(
     "vita_dbg",
@@ -1246,13 +1356,6 @@ rb_define_global_function(
     1
 );
 
-#ifdef MKXP_VITA_HEARTBEAT_LOG
-rb_define_global_function(
-    "vita_heartbeat_new_game",
-    RUBY_METHOD_FUNC(vita_heartbeat_new_game),
-    0
-);
-#endif
 
     if (result != 0) {
         psvDebugScreenPrintf("ruby_setup FAILED: %d\n", result);
@@ -1329,7 +1432,7 @@ rb_eval_string_protect(
     "  end\n"
     "  def self.frame_reset; end\n"
 #ifdef MKXP_VITA_SCREEN_FX
-    /* Fix (MKXP_VITA_SCREEN_FX): real brightness / fades / freeze / transition / snap (sharedstate_test.cpp). */
+    /* Fix (MKXP_VITA_SCREEN_FX): real brightness / fades / freeze / transition / snap (sharedstate-vita.cpp). */
     "  def self.brightness=(v)\n"
     "    @brightness = [[v.to_i, 0].max, 255].min\n"
     "    vita_fx_brightness(@brightness)\n"
@@ -1761,9 +1864,6 @@ rb_eval_string_protect(
 "    alias vita_trace_command_new_game command_new_game\n"
 "    def command_new_game\n"
 "      File.open('" VITA_GAME_ROOT "qa.log', 'a') { |f| f.puts 'NEW_GAME_ENTER' }\n"
-#ifdef MKXP_VITA_HEARTBEAT_LOG
-"      vita_heartbeat_new_game\n"
-#endif
 "      vita_trace('command_new_game')\n"
 "      vita_trace_command_new_game\n"
 "    end\n"
@@ -2181,27 +2281,6 @@ rb_eval_string_protect(
 "  Scene_Title.prepend(VitaSoakTitle)\n"
 "  VITA_SOAK\n"
 #endif
-#ifdef MKXP_VITA_DEBUG_DIRECT_BATTLE
-/* Debug only: Scene_Battle harness, troop 3 straight from boot (MKXP_VITA_DEBUG_DIRECT_BATTLE). */
-"  # DEBUG ONLY (MKXP_VITA_DEBUG_DIRECT_BATTLE): renderer/binding harness for Scene_Battle. Boots a\n"
-"  # new game straight into troop 3 on map 41; NOT the real pre-battle state (see the checkpoint).\n"
-"  class << SceneManager\n"
-"    alias vita_debug_battle_first_scene_class first_scene_class\n"
-"    def first_scene_class\n"
-"      DataManager.setup_new_game\n"
-"      $game_map.setup(41)\n"
-"      $game_player.moveto(1, 10)\n"
-"      $game_player.refresh\n"
-"      BattleManager.setup(3, false, false)\n"
-"      BattleManager.play_battle_bgm\n"
-"      SceneManager.snap_for_background\n"
-"      @stack = [Scene_Map.new]\n"
-"      File.open('" VITA_GAME_ROOT "qa.log', 'a') { |f| f.puts 'DEBUG_DIRECT_BATTLE troop=3 map=41' }\n"
-"      vita_trace('DEBUG_DIRECT_BATTLE troop=3 map=41')\n"
-"      Scene_Battle\n"
-"    end\n"
-"  end\n"
-#endif
 #ifdef MKXP_VITA_SAVE_PATH
 "  # Fix (MKXP_VITA_SAVE_PATH): save files in " VITA_GAME_ROOT " (the working directory app0:\n"
 "  # is read-only) and no Dir.glob (stubbed): check the slots directly.\n"
@@ -2531,50 +2610,6 @@ rb_eval_string_protect(
 "      end\n"
 "    end\n"
 "  end)\n"
-#endif
-#ifdef MKXP_VITA_DEBUG_TILESET
-"  # DIAGNOSTIC ONLY (MKXP_VITA_DEBUG_TILESET): map/tileset/bitmap state -> tileset.log.\n"
-"  TOPLEVEL_BINDING.eval(<<~'VITA_TS_HOOKS', 'vita_ts_hooks', 1)\n"
-"  module VitaTsDiag\n"
-"    LOG = '" VITA_GAME_ROOT "tileset.log'\n"
-"    def self.log(s)\n"
-"      File.open(LOG, 'a') { |f| f.puts s }\n"
-"    rescue Exception\n"
-"    end\n"
-"    def self.head\n"
-"      \"frame=#{Graphics.frame_count} map=#{($game_map.map_id rescue '?')} \"\n"
-"    end\n"
-"  end\n"
-"  Game_Map.prepend(Module.new do\n"
-"    def setup(map_id)\n"
-"      VitaTsDiag.log(\"TS_RUBY_MAP_SETUP_BEGIN #{VitaTsDiag.head}new_map=#{map_id}\")\n"
-"      super\n"
-"      ts = tileset\n"
-"      VitaTsDiag.log(\"TS_RUBY_MAP_SETUP_END #{VitaTsDiag.head}tileset_id=#{@map.tileset_id} tileset_obj=#{ts.object_id} name=#{ts.name.inspect} mode=#{ts.mode} names=#{ts.tileset_names.inspect}\")\n"
-"    end\n"
-"  end)\n"
-"  Spriteset_Map.prepend(Module.new do\n"
-"    def initialize(*a)\n"
-"      VitaTsDiag.log(\"TS_RUBY_SPRITESET_NEW #{VitaTsDiag.head}\")\n"
-"      super\n"
-"    end\n"
-"    def dispose(*a)\n"
-"      VitaTsDiag.log(\"TS_RUBY_SPRITESET_DISPOSE #{VitaTsDiag.head}spriteset=#{object_id}\")\n"
-"      super\n"
-"    end\n"
-"    def load_tileset\n"
-"      VitaTsDiag.log(\"TS_RUBY_LOAD_TILESET_BEGIN #{VitaTsDiag.head}spriteset=#{object_id} tilemap=#{@tilemap.object_id} tileset_id=#{($game_map.tileset.id rescue '?')} names=#{($game_map.tileset.tileset_names.inspect rescue '?')}\")\n"
-"      super\n"
-"      names = ($game_map.tileset.tileset_names rescue [])\n"
-"      9.times do |i|\n"
-"        b = (@tilemap.bitmaps[i] rescue nil)\n"
-"        info = b ? (vita_bitmap_describe(b, false) rescue \"describe_failed\") : ''\n"
-"        VitaTsDiag.log(\"TS_RUBY_SLOT #{VitaTsDiag.head}slot=#{i} name=#{names[i].inspect} rb_obj=#{b ? b.object_id : 'nil'} disposed=#{b ? (b.disposed? rescue '?') : '-'} #{info}\")\n"
-"      end\n"
-"      VitaTsDiag.log(\"TS_RUBY_LOAD_TILESET_END #{VitaTsDiag.head}flags_obj=#{(@tilemap.flags.object_id rescue '?')}\")\n"
-"    end\n"
-"  end)\n"
-"  VITA_TS_HOOKS\n"
 #endif
 #ifdef MKXP_VITA_SCENE_BREADCRUMB
 "  # DIAGNOSTIC ONLY (MKXP_VITA_SCENE_BREADCRUMB): one line per scene change / save step / flash to\n"
@@ -4083,8 +4118,11 @@ rb_define_global_function("vita_gl_ledger_dump", RUBY_METHOD_FUNC(vita_gl_ledger
 }
 #endif
 
-#ifdef VITA_TEST_AUTOPRESS
+#if defined(VITA_TEST_AUTOPRESS) && !defined(MKXP_VITA_AUDIT_FIXES)
 /*
+ * MKXP_VITA_AUDIT_FIXES removes this early test hook: $vita_autopress is never filled, but the
+ * wrapper ran on every Input.trigger? call (an extra Ruby method and an Array#find per call).
+ *
  * TEST VITA: preme automaticamente dei tasti a frame prefissati.
  * $vita_autopress = [[frame, :TASTO], ...]; ogni voce scatta una
  * sola volta, quando Graphics.frame_count >= frame.
@@ -4139,6 +4177,17 @@ psvDebugScreenPrintf("Loading LISA Actors.rvdata2...\n");
 
 int lisaState = 0;
 
+#ifdef MKXP_VITA_DATA_PATHS
+/* Fix (MKXP_VITA_DATA_PATHS): the game's own layout, Data/Actors.rvdata2 and Data/Scripts.rvdata2 (as
+ * Game.ini's Scripts=Data\Scripts.rvdata2); the copies in the game root that the early test setup
+ * used are still accepted. Missing files: a message pointing to the installation guide. */
+VALUE lisaActor = rb_eval_string_protect(
+    "f = File.exist?('" VITA_GAME_ROOT "Data/Actors.rvdata2') ? '" VITA_GAME_ROOT "Data/Actors.rvdata2' : '" VITA_GAME_ROOT "Actors.rvdata2'; "
+    "data = Marshal.load(File.binread(f)); "
+    "data[1].name.to_s",
+    &lisaState
+);
+#else
 VALUE lisaActor = rb_eval_string_protect(
     "data = Marshal.load("
     "File.binread('" VITA_GAME_ROOT "Actors.rvdata2')"
@@ -4146,6 +4195,7 @@ VALUE lisaActor = rb_eval_string_protect(
     "data[1].name.to_s",
     &lisaState
 );
+#endif
 
 if (lisaState) {
     VALUE exc = rb_errinfo();
@@ -4155,6 +4205,13 @@ if (lisaState) {
         "LISA Actors FAILED: %s\n",
         StringValueCStr(msg)
     );
+#ifdef MKXP_VITA_DATA_PATHS
+    psvDebugScreenPrintf(
+        "\nGame files not found in " VITA_GAME_ROOT "\n"
+        "Copy the folders Data, Graphics, Audio and Fonts of your copy of\n"
+        "LISA: The Painful there (extract Game.rgss3a first).\n"
+        "See docs/INSTALLATION.md of the LISA-Vita project.\n");
+#endif
 
     rb_set_errinfo(Qnil);
 } else {
@@ -4166,6 +4223,14 @@ psvDebugScreenPrintf("\nLoading LISA Scripts.rvdata2...\n");
 
 int scriptsState = 0;
 
+#ifdef MKXP_VITA_DATA_PATHS
+VALUE scriptsInfo = rb_eval_string_protect(
+    "f = File.exist?('" VITA_GAME_ROOT "Data/Scripts.rvdata2') ? '" VITA_GAME_ROOT "Data/Scripts.rvdata2' : '" VITA_GAME_ROOT "Scripts.rvdata2'; "
+    "$scripts = Marshal.load(File.binread(f)); "
+    "[$scripts.is_a?(Array), $scripts.length]",
+    &scriptsState
+);
+#else
 VALUE scriptsInfo = rb_eval_string_protect(
     "$scripts = Marshal.load("
     "File.binread('" VITA_GAME_ROOT "Scripts.rvdata2')"
@@ -4173,6 +4238,7 @@ VALUE scriptsInfo = rb_eval_string_protect(
     "[$scripts.is_a?(Array), $scripts.length]",
     &scriptsState
 );
+#endif
 
 if (scriptsState) {
     VALUE exc = rb_errinfo();
@@ -4182,6 +4248,11 @@ if (scriptsState) {
         "Scripts FAILED: %s\n",
         StringValueCStr(msg)
     );
+#ifdef MKXP_VITA_DATA_PATHS
+    psvDebugScreenPrintf(
+        "\nCould not read " VITA_GAME_ROOT "Data/Scripts.rvdata2\n"
+        "See docs/INSTALLATION.md of the LISA-Vita project.\n");
+#endif
 
     rb_set_errinfo(Qnil);
 } else {

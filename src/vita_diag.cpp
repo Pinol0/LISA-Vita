@@ -4,11 +4,11 @@
  * Timeline (MKXP_VITA_TIMELINE): phase BOOT is armed at process start and closed 30 frames after
  * the first Scene_Map#start; phase BATTLE is armed by Game_Interpreter#command_301 and closed 60
  * frames after Scene_Battle#start. Entries are kept in RAM (no allocation per event) and written
- * once per phase, from the main thread after the swap, to ux0:data/ruby_vita_test/*_timeline.log.
+ * once per phase, from the main thread after the swap, to <game root>/*_timeline.log.
  * Timestamps are absolute (sceKernelGetProcessTimeWide, us since process start).
  *
  * PERF counters (MKXP_VITA_PERF_BITMAP): count/us/bytes per op for the current 120-frame PERF
- * window, appended to the PERF line by sharedstate_test.cpp.
+ * window, appended to the PERF line by sharedstate-vita.cpp.
  */
 #include "vita_diag.h"
 #include "vita_paths.h"
@@ -52,8 +52,8 @@ extern "C" int vitaDiagFboRtMax;
 #ifdef MKXP_VITA_DEFERRED_GL_DELETE
 int vitaDeferredGLPending();   /* gl-fun-vita.cpp */
 #endif
-extern "C" void vitaDiagBitmapMem(int *live, uint64_t *cpuBytes, uint64_t *texBytes);   /* bitmap-vita-minimal.cpp */
-extern "C" size_t vitaDiagPngCacheBytes();                              /* bitmap-vita-minimal.cpp */
+extern "C" void vitaDiagBitmapMem(int *live, uint64_t *cpuBytes, uint64_t *texBytes);   /* bitmap-vita.cpp */
+extern "C" size_t vitaDiagPngCacheBytes();                              /* bitmap-vita.cpp */
 extern "C" __attribute__((weak)) void vitaHeapLedgerTotals(unsigned *blocks, unsigned *kb, unsigned *untracked);
 extern "C" __attribute__((weak)) void vitaHeapLedgerDump(const char *reason);   /* vita-heap-ledger.cpp */
 extern "C" __attribute__((weak)) unsigned int vitaPthreadParmsFreed;   /* vita-pthread-parms.cpp */
@@ -65,8 +65,8 @@ extern "C" __attribute__((weak)) void vitaPredecodeStatsC(unsigned *q, unsigned 
 extern "C" __attribute__((weak)) unsigned int vitaSemNocancelWaits;   /* vita-sem-nocancel.cpp */
 extern "C" __attribute__((weak)) unsigned int vitaFiberCore0;   /* vita-pthread-parms.cpp (FIBER_CORE0) */
 extern "C" __attribute__((weak)) void vitaJoinStats(unsigned *n, unsigned *us);   /* vita-handoff-bench.cpp */
-extern "C" __attribute__((weak)) void vitaTexPagingStats(unsigned *evicted, unsigned *restored, unsigned *fails, unsigned *outKb);   /* bitmap-vita-minimal.cpp */
-extern "C" __attribute__((weak)) void vitaAtlasParkStats(unsigned *reused, unsigned *fresh, unsigned *parked);   /* sharedstate_test.cpp */
+extern "C" __attribute__((weak)) void vitaTexPagingStats(unsigned *evicted, unsigned *restored, unsigned *fails, unsigned *outKb);   /* bitmap-vita.cpp */
+extern "C" __attribute__((weak)) void vitaAtlasParkStats(unsigned *reused, unsigned *fresh, unsigned *parked);   /* sharedstate-vita.cpp */
 extern "C" __attribute__((weak)) unsigned int vitaThreadReentReleased;   /* vita-thread-reent.cpp */
 /* libruby pthread coroutine backend (Context.c): Fiber threads created / ended and joined. */
 struct coroutine_vita_stats { unsigned int created, exited, joined_exited, joined_suspended, released_exited; };
@@ -1008,7 +1008,7 @@ static ThrSample thrNow()
 static ThrSample gThrFrame0, gThrPhase0;
 static uint64_t gPhaseWall0 = 0, gPrepCpu = 0, gPrepWall = 0, gCompCpu = 0, gCompWall = 0;
 
-/* sharedstate_test.cpp: around prepareDraw (which 0) and composite (which 1). */
+/* sharedstate-vita.cpp: around prepareDraw (which 0) and composite (which 1). */
 extern "C" void vitaDiagPhaseMark(int which, int begin)
 {
     if (begin) {

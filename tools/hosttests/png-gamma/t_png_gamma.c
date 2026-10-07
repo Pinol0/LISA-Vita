@@ -1,6 +1,6 @@
 /* Host test: why does explode.png (960x1152, 20 KB, gAMA/cHRM/iCCP) decode 2x slower on the Vita than
  * Fire3.png (960x1152, 1.5 MB, no colour chunks)? Times the libpng simplified API (what
- * bitmap-vita-minimal.cpp uses) against the low-level API with no colour transforms (what SDL_image,
+ * bitmap-vita.cpp uses) against the low-level API with no colour transforms (what SDL_image,
  * hence mkxp-z, does), and checks whether the pixels differ.
  *   gcc -O2 t_png_gamma.c -lpng -o t && ./t file.png... */
 #include <png.h>

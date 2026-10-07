@@ -1,9 +1,9 @@
 #!/bin/sh
-# Mutation check for run.sh: every mutant of src/bitmap-vita-minimal.cpp must FAIL.
+# Mutation check for run.sh: every mutant of src/bitmap-vita.cpp must FAIL.
 # usage: mutate.sh ROOT_DIR SCRATCH_DIR
 cd "$(dirname "$0")"
 ROOT=$1; M=$2; mkdir -p "$M"
-SRC=../../../src/bitmap-vita-minimal.cpp
+SRC=../../../src/bitmap-vita.cpp
 run() {   # name, python replace (old -> new)
     name=$1
     python3 - "$SRC" "$M/$name.cpp" "$2" "$3" <<'PY'
@@ -41,3 +41,19 @@ run clone_not_clean  "        p->fileClean = true;
         p->cleanHue = other.p->cleanHue;" "        p->cleanHue = other.p->cleanHue;"
 run drop_dirty       "        if (!b->fileClean || !b->hasCpuPixels || gPgFrame - b->lastUse < idle" "        if (!b->hasCpuPixels || gPgFrame - b->lastUse < idle"
 run dirty_keeps_hue  "inline void vitaPgDirty(BitmapPrivate *p) { p->fileClean = false; p->cleanHue = 0; }" "inline void vitaPgDirty(BitmapPrivate *p) { p->fileClean = false; }"
+# MKXP_VITA_TEX_DIRECT_CACHE / MKXP_VITA_LOAD_OOM_RETRY
+run no_direct_cache  "        if (VitaImageCache::loadInto(path, dstFn, &d)) {" "        if (false && VitaImageCache::loadInto(path, dstFn, &d)) {"
+run no_load_retry    "        if (!existing.empty()) {
+            unsigned cpu = 0, tex = 0;" "        if (false) {
+            unsigned cpu = 0, tex = 0;"
+run retry_no_evict   "            tex = vitaPgEvictIdle();" "            tex = 0;"
+run retry_no_gc      "            rb_gc_start();
+            loaded = vitaLoadPngToBitmap(existing, p->gl);" "            loaded = vitaLoadPngToBitmap(existing, p->gl);"
+run upload_unchecked "    if (vglGetTexDataPointer(GL_TEXTURE_2D))
+        return true;" "    if (true)
+        return true;"
+run flush_into_tex0  "        if (p->evicted)
+            return;   /* the rebuild found no texture memory: the upload waits for the next try */" ""
+run restore_unchecked "        if (ok && !vitaUploadOk(t))   /* no texture memory: a failed restore (backoff), not an empty one */
+            ok = false;" ""
+run retry_wrong_path "            loaded = vitaLoadPngToBitmap(existing, p->gl);" "            loaded = vitaLoadPngToBitmap(vitaPath, p->gl);"

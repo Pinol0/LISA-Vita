@@ -15,6 +15,22 @@ void raiseDisposedAccess(VALUE self)
     rb_raise(rb_eRuntimeError, "disposed mkxp object");
 }
 
+#ifdef MKXP_VITA_AUDIT_FIXES
+/* RGSS3's RGSSError (StandardError) and RGSSReset (Exception), defined like upstream's initExceptions
+ * (binding-util.cpp): scripts may name them (`rescue RGSSError`) even if nothing raises them yet. */
+VALUE vitaRgssErrorClass()
+{
+    static VALUE cls = Qnil;
+    if (NIL_P(cls)) {
+        cls = rb_const_defined(rb_cObject, rb_intern("RGSSError")) ? rb_const_get(rb_cObject, rb_intern("RGSSError"))
+                                                                   : rb_define_class("RGSSError", rb_eStandardError);
+        if (!rb_const_defined(rb_cObject, rb_intern("RGSSReset")))
+            rb_define_class("RGSSReset", rb_eException);
+    }
+    return cls;
+}
+#endif
+
 void raiseRbExc(Exception *exc)
 {
     if (!exc)
@@ -37,6 +53,29 @@ void raiseRbExc(Exception *exc)
     case Exception::IOError:
         rb_raise(rb_eIOError, "%s", message.c_str());
         break;
+
+#ifdef MKXP_VITA_AUDIT_FIXES
+    /*
+     * Fix (MKXP_VITA_AUDIT_FIXES): the RGSS3 classes, as upstream binding-util.cpp maps them, for the
+     * types whose class matters to a script and keeps plain-rescue behaviour: a missing file raises
+     * Errno::ENOENT (Bitmap.new, Audio: BITMAP_LOAD_V2 already said so, the error was RuntimeError),
+     * RGSSError (disposed object, bad size) its own class, SystemExit stays SystemExit. All three are
+     * still caught by a plain `rescue` like the RuntimeError before (SystemExit was not and is not).
+     * MKXPError & co. stay RuntimeError: upstream derives them from Exception, which a plain rescue
+     * would no longer catch.
+     */
+    case Exception::NoFileError:
+        rb_raise(rb_const_get(rb_const_get(rb_cObject, rb_intern("Errno")), rb_intern("ENOENT")), "%s", message.c_str());
+        break;
+
+    case Exception::RGSSError:
+        rb_raise(vitaRgssErrorClass(), "%s", message.c_str());
+        break;
+
+    case Exception::SystemExit:
+        rb_raise(rb_eSystemExit, "%s", message.c_str());
+        break;
+#endif
 
     default:
         rb_raise(rb_eRuntimeError, "%s", message.c_str());

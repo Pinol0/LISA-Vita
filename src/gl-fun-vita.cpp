@@ -156,7 +156,7 @@ int vitaDeferredGLPending()
 }
 
 #ifdef MKXP_VITA_ATLAS_PARK
-/* Swaps so far (sharedstate_test.cpp: age of a parked tile atlas). */
+/* Swaps so far (sharedstate-vita.cpp: age of a parked tile atlas). */
 extern "C" unsigned int vitaSwapCountNow(void)
 {
     return gVitaSwapCount;
@@ -550,7 +550,7 @@ extern "C" void vitaGlLedgerTotals(int *ntex, uint64_t *texBytes, int *nbuf, uin
     *bufBytes = gLBufBytes;
 }
 
-/* bitmap-vita-minimal.cpp (MKXP_VITA_PERF_BITMAP): texture names of the live Bitmaps. */
+/* bitmap-vita.cpp (MKXP_VITA_PERF_BITMAP): texture names of the live Bitmaps. */
 extern "C" void vitaDiagBitmapTexIds(void (*cb)(unsigned int tex, void *ctx), void *ctx);
 
 extern "C" void vitaGlLedgerDump(const char *reason)

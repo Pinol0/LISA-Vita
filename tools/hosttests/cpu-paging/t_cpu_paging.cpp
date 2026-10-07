@@ -1,5 +1,5 @@
 // Host test for MKXP_VITA_HUE_PAGING + MKXP_VITA_CPU_PAGING (with MKXP_VITA_TEX_PAGING): the real
-// src/bitmap-vita-minimal.cpp, built for the host (run.sh), against
+// src/bitmap-vita.cpp, built for the host (run.sh), against
 //   - a fake GL that keeps every texture's pixels (TexImage2D / TexSubImage2D),
 //   - a fake big pool: C++ blocks of 128 KiB or more count against a cap and throw std::bad_alloc
 //     past it, as vita-big-alloc.cpp's pool does once the newlib heap is full too,
@@ -13,6 +13,7 @@
 #include <GL/gl.h>
 #include <png.h>
 
+#include <climits>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -29,6 +30,9 @@
 #include "texpool.h"
 #include "shader.h"
 #include "vita-font.h"
+#include "vita-image-cache.h"
+#include "exception.h"
+#include <sys/stat.h>
 #include <vitaGL.h>
 #include <psp2/ctrl.h>
 
@@ -37,7 +41,8 @@ namespace oracle {
 }
 
 /* ---------- fake big pool ---------- */
-static size_t gBigCap = (size_t)1 << 40, gBigUsed = 0;
+static size_t gBigCap = (size_t)1 << 40, gBigUsed = 0, gMaxAlloc = 0;
+volatile int gInLoad = 0;
 static unsigned gBigThrows = 0;
 static bool gStatsLie = false;   /* report a free pool: vitaCpuMakeRoom does nothing, the decode throws */
 static const size_t kBig = 128 * 1024;
@@ -48,6 +53,8 @@ void *operator new(size_t n)
         ++gBigThrows;
         throw std::bad_alloc();
     }
+    if (n > gMaxAlloc)
+        gMaxAlloc = n;
     Hdr *h = (Hdr *)std::malloc(sizeof(Hdr) + n);
     if (!h)
         throw std::bad_alloc();
@@ -78,32 +85,86 @@ extern "C" void vitaBigAllocStats(unsigned *usedKb, unsigned *freeKb, unsigned *
 }
 
 /* ---------- fake vitaGL / psp2 ---------- */
-static size_t gVglFree = (size_t)1 << 30;
-extern "C" size_t vglMemFree(vglMemType) { return gVglFree / 3; }
-extern "C" void *vglGetTexDataPointer(GLenum) { return nullptr; }
+/* Texture memory as vitaGL keeps it: rows of VGL_ALIGN(w, 8) * 4 bytes, from a budget; a texture
+ * whose memory does not fit has no data (gpu_alloc_texture leaves tex->data NULL). */
+static size_t gVglCap = (size_t)1 << 40, gVglUsed = 0;
+extern "C" size_t vglMemFree(vglMemType) { return (gVglCap > gVglUsed ? gVglCap - gVglUsed : 0) / 3; }
 extern "C" int sceCtrlPeekBufferPositive(int, SceCtrlData *, int) { return 0; }
 
 /* ---------- fake GL ---------- */
-struct FakeTex { int w = 0, h = 0; std::vector<unsigned char> px; };
+/* Texture memory is vitaGL's, not the C++ heap's: kept out of the fake big pool (malloc). */
+template <class T> struct MallocAlloc {
+    typedef T value_type;
+    MallocAlloc() = default;
+    template <class U> MallocAlloc(const MallocAlloc<U> &) {}
+    T *allocate(size_t n) { T *p = (T *)std::malloc(n * sizeof(T)); if (!p) throw std::bad_alloc(); return p; }
+    void deallocate(T *p, size_t) { std::free(p); }
+    bool operator==(const MallocAlloc &) const { return true; }
+    bool operator!=(const MallocAlloc &) const { return false; }
+};
+struct FakeTex { int w = 0, h = 0; size_t stride = 0; bool ok = false; std::vector<unsigned char, MallocAlloc<unsigned char>> px; };
 static std::map<GLuint, FakeTex> gTex;
 static GLuint gNextTex = 1, gBound = 0;
 static std::map<GLuint, int> gDeleted;   /* tex id -> deletions */
+static unsigned gDirectPtrs = 0;          /* vglGetTexDataPointer handed out texture memory */
+extern "C" void *vglGetTexDataPointer(GLenum)
+{
+    auto it = gTex.find(gBound);
+    if (it == gTex.end() || !it->second.ok)
+        return nullptr;
+    ++gDirectPtrs;
+    return it->second.px.data();
+}
+static void texFree(FakeTex &t)
+{
+    if (t.ok)
+        gVglUsed -= t.px.size();
+    t.ok = false;
+    decltype(t.px)().swap(t.px);
+}
 static void APIENTRY fGenTextures(GLsizei n, GLuint *t) { for (int i = 0; i < n; ++i) { t[i] = gNextTex++; gTex[t[i]]; } }
-static void APIENTRY fDeleteTextures(GLsizei n, const GLuint *t) { for (int i = 0; i < n; ++i) { gTex.erase(t[i]); ++gDeleted[t[i]]; } }
+static void APIENTRY fDeleteTextures(GLsizei n, const GLuint *t)
+{
+    for (int i = 0; i < n; ++i) {
+        auto it = gTex.find(t[i]);
+        if (it != gTex.end()) { texFree(it->second); gTex.erase(it); }
+        ++gDeleted[t[i]];
+    }
+}
 static void APIENTRY fBindTexture(GLenum, GLuint t) { gBound = t; }
 static void APIENTRY fTexImage2D(GLenum, GLint, GLint, GLsizei w, GLsizei h, GLint, GLenum, GLenum, const GLvoid *d)
 {
     FakeTex &t = gTex.at(gBound);
-    t.w = w; t.h = h;
-    t.px.assign((size_t)w * h * 4, 0);
+    texFree(t);
+    t.w = w; t.h = h; t.stride = (size_t)((w + 7) & ~7) * 4;
+    const size_t n = t.stride * h;
+    if (gVglUsed + n > gVglCap)
+        return;   /* out of memory: no data */
+    t.ok = true;
+    t.px.assign(n, 0);
+    gVglUsed += n;
     if (d)
-        std::memcpy(t.px.data(), d, t.px.size());
+        for (int r = 0; r < h; ++r)
+            std::memcpy(t.px.data() + r * t.stride, (const unsigned char *)d + (size_t)r * w * 4, (size_t)w * 4);
 }
 static void APIENTRY fTexSubImage2D(GLenum, GLint, GLint x, GLint y, GLsizei w, GLsizei h, GLenum, GLenum, const GLvoid *d)
 {
     FakeTex &t = gTex.at(gBound);
+    if (!t.ok)
+        return;
     for (int r = 0; r < h; ++r)
-        std::memcpy(t.px.data() + ((size_t)(y + r) * t.w + x) * 4, (const unsigned char *)d + (size_t)r * w * 4, (size_t)w * 4);
+        std::memcpy(t.px.data() + (size_t)(y + r) * t.stride + (size_t)x * 4, (const unsigned char *)d + (size_t)r * w * 4, (size_t)w * 4);
+}
+static bool texContent(GLuint id, std::vector<unsigned char> &out)
+{
+    auto it = gTex.find(id);
+    if (it == gTex.end() || !it->second.ok)
+        return false;
+    const FakeTex &t = it->second;
+    out.resize((size_t)t.w * t.h * 4);
+    for (int r = 0; r < t.h; ++r)
+        std::memcpy(out.data() + (size_t)r * t.w * 4, t.px.data() + r * t.stride, (size_t)t.w * 4);
+    return true;
 }
 static void APIENTRY fTexParameteri(GLenum, GLenum, GLint) {}
 static void APIENTRY fActiveTexture(GLenum) {}
@@ -112,8 +173,11 @@ static void APIENTRY fGetIntegerv(GLenum p, GLint *v) { *v = p == GL_TEXTURE_BIN
 static void APIENTRY fDeleteFramebuffers(GLsizei, const GLuint *) {}
 GLFunctions gl;
 
-/* ---------- the rest of what bitmap-vita-minimal.cpp links against ---------- */
-SharedState *SharedState::instance = nullptr;
+/* ---------- the rest of what bitmap-vita.cpp links against ---------- */
+/* shState-> is only used for texPool() (stubbed below): any non-null, aligned object will do
+ * (a null instance made every releaseResources a member call on a null pointer: UB). */
+alignas(64) static unsigned char gStateBuf[4096];
+SharedState *SharedState::instance = reinterpret_cast<SharedState *>(gStateBuf);
 static char gPoolDummy;
 TexPool &SharedState::texPool() const { return *(TexPool *)&gPoolDummy; }
 void TexPool::release(TEXFBO &o) { TEXFBO::fini(o); }
@@ -124,6 +188,16 @@ int Color::serialSize() const { return 0; }
 void Color::serialize(char *) const {}
 bool VitaFont::available(const VitaFontSpec &) { return false; }
 bool VitaFont::drawText(unsigned char *, int, int, int, int, int, int, const char *, int, const VitaFontSpec &, VitaTextInfo *) { return false; }
+/* Ruby's full GC: frees the bitmaps the game no longer references (the test's garbage list). */
+static std::vector<Bitmap *> gGarbage;
+static unsigned gGcRuns = 0;
+extern "C" void rb_gc_start(void)
+{
+    ++gGcRuns;
+    for (Bitmap *b : gGarbage)
+        delete b;
+    gGarbage.clear();
+}
 
 extern "C" void vitaTexPagingTick();
 extern "C" void vitaTexPagingStats(unsigned *evicted, unsigned *restored, unsigned *fails, unsigned *outKb);
@@ -132,10 +206,15 @@ extern "C" void vitaCpuPagingStats(unsigned *dropped, unsigned *droppedKb);
 /* ---------- images ---------- */
 static std::string gRoot;
 static std::vector<std::vector<unsigned char>> gFilePx;
-static const int kW = 256, kH = 192;   /* 192 KiB: a big-pool block */
+/* >= 1 MiB decoded (VitaImageCache::kMinBytes: the disk-cache path), even files with a width that
+ * is a multiple of 8 (vitaGL rows tight), odd ones not (rows padded) */
+static std::vector<int> gFileW, gFileH;
+static const size_t kImg = (size_t)520 * 512 * 4;
 
 static void writePng(const std::string &path, std::mt19937 &rng)
 {
+    const int kW = gFileW.size() % 2 ? 515 : 520, kH = 512;
+    gFileW.push_back(kW); gFileH.push_back(kH);
     std::vector<unsigned char> px((size_t)kW * kH * 4);
     static const unsigned char pal[8][4] = { {255, 0, 0, 255}, {0, 200, 40, 255}, {20, 40, 230, 255}, {250, 250, 250, 128},
                                              {0, 0, 0, 0}, {128, 64, 32, 255}, {90, 200, 200, 200}, {255, 128, 0, 255} };
@@ -161,7 +240,11 @@ static void writePng(const std::string &path, std::mt19937 &rng)
 }
 
 /* ---------- model ---------- */
-struct Obj { Bitmap *b; std::vector<unsigned char> exp; int w, h; bool hueClone; };
+static unsigned gEntryLoads = 0, gDirectLoads = 0;
+struct Obj { Bitmap *b; std::vector<unsigned char> exp; int w, h; bool hueClone; bool fromFile = false; bool written = false; };
+/* vitaGL out of memory for a texture whose content comes from the CPU (clone, hue, set_pixel, blt):
+ * nothing retries those uploads - a known limit, counted, not part of what this test checks. */
+static unsigned gCpuTexNoMem = 0;
 static int gFails = 0;
 static void fail(const char *what, int step, int idx)
 {
@@ -187,15 +270,24 @@ static void checkRender(Obj &o, int step, int idx)
         /* the rebuild found no memory (texture paging's backoff: not drawn, tried again 60 frames
          * later); with room again it must come back with the right pixels */
         ++gRestoreRetries;
-        const size_t cap = gBigCap;
+        const size_t cap = gBigCap, vcap = gVglCap;
         gBigCap = (size_t)1 << 40;
+        gVglCap = (size_t)1 << 40;
         for (int k = 0; k < 61; ++k)
             vitaTexPagingTick();
         t = &o.b->getGLTypes();
         gBigCap = cap;
+        gVglCap = vcap;
     }
-    auto it = gTex.find(t->tex.gl);
-    if (it == gTex.end() || it->second.px != o.exp)
+    std::vector<unsigned char> px;
+    if (!texContent(t->tex.gl, px))
+    {
+        if (gTex.count(t->tex.gl) && (!o.fromFile || o.written))
+            ++gCpuTexNoMem;
+        else
+            fail(!gTex.count(t->tex.gl) ? "no texture" : "file bitmap texture without memory", step, idx);
+    }
+    else if (px != o.exp)
         fail("texture != model", step, idx);
 }
 
@@ -216,6 +308,22 @@ int main(int argc, char **argv)
     gl.ActiveTexture = fActiveTexture; gl.BindFramebuffer = fBindFramebuffer; gl.GetIntegerv = fGetIntegerv;
     gl.DeleteFramebuffers = fDeleteFramebuffers;
 
+#ifdef MKXP_VITA_AUDIT_FIXES
+    {   /* Bitmap.new(w, h) sizes (MKXP_VITA_AUDIT_FIXES): negative or overflowing -> RGSSError, 0 kept */
+        auto raises = [](int w, int h) {
+            try { Bitmap b(w, h); } catch (const Exception &e) { return e.type == Exception::RGSSError; }
+            return false;
+        };
+        bool zeroOk = true;
+        try { Bitmap b(0, 4); zeroOk = b.width() == 0 && b.height() == 4; } catch (...) { zeroOk = false; }
+        const bool ok = raises(-1, 5) && raises(5, -1) && raises(INT_MIN, 3) && raises(70000, 70000) && raises(32768, 16384) &&
+                        !raises(1, 1) && !raises(544, 416) && zeroOk;
+        std::printf("%s  Bitmap.new sizes: negative/overflowing raise RGSSError, 0 and normal sizes work\n", ok ? "PASS" : "FAIL");
+        if (!ok) ++gFails;
+    }
+#endif
+    std::remove((gRoot + "qa.log").c_str());
+    if (std::system(("rm -rf '" + gRoot + "cache'").c_str()) != 0) return 2;   /* entries of an earlier run are stale */
     std::mt19937 rng(argc > 1 ? std::atoi(argv[1]) : 1);
     const int kFiles = 6;
     for (int i = 0; i < kFiles; ++i)
@@ -226,7 +334,7 @@ int main(int argc, char **argv)
     std::map<std::pair<int, int>, int> cache;   /* (file, hue) -> objs index, as Cache keeps them */
     std::map<Bitmap *, GLuint> hueTex;   /* live hue clone -> texture it was last drawn with */
     unsigned hueRebuilt = 0;
-    unsigned hueRebuildChecks = 0, retryCases = 0, escapes = 0;
+    unsigned hueRebuildChecks = 0, retryCases = 0, escapes = 0, directedLoads = 0, oomErrors = 0;
     const int steps = argc > 2 ? std::atoi(argv[2]) : 6000;
 
     auto cacheGet = [&](int f, int hue) -> int {
@@ -236,7 +344,18 @@ int main(int argc, char **argv)
         auto base = cache.find({ f, 0 });
         int bi;
         if (base == cache.end()) {
-            Obj o{ new Bitmap(("img" + std::to_string(f)).c_str()), gFilePx[f], kW, kH, false };
+            struct stat st;
+            const bool entry = ::stat(VitaImageCache::entryPathFor(gRoot + "img" + std::to_string(f) + ".png").c_str(), &st) == 0;
+            const bool roomy = gBigCap > gBigUsed + ((size_t)16 << 20) && gVglCap > gVglUsed + ((size_t)64 << 20);
+            gMaxAlloc = 0;
+            gInLoad = entry && roomy;
+            Bitmap *nb = new Bitmap(("img" + std::to_string(f)).c_str());
+            gInLoad = 0;
+            if (entry && roomy) {   /* a cache hit: no CPU buffer of the decoded size (MKXP_VITA_TEX_DIRECT_CACHE) */
+                ++gEntryLoads;
+                if (gMaxAlloc < gFilePx[f].size()) ++gDirectLoads;
+            }
+            Obj o{ nb, gFilePx[f], gFileW[f], gFileH[f], false, true };
             objs.push_back(o);
             bi = (int)objs.size() - 1;
             cache[{ f, 0 }] = bi;
@@ -246,9 +365,9 @@ int main(int argc, char **argv)
         if (hue == 0)
             return bi;
         /* Cache.hue_changed_bitmap: normal_bitmap(path).clone.hue_change(hue) */
-        Obj o{ new Bitmap(*objs[bi].b), objs[bi].exp, kW, kH, true };
+        Obj o{ new Bitmap(*objs[bi].b), objs[bi].exp, objs[bi].w, objs[bi].h, true };
         o.b->hueChange(hue);
-        oracle::VitaBitmapCpu::hueChange(oracle::VitaBitmapCpu::Image{ kW, kH, o.exp.data() }, hue);
+        oracle::VitaBitmapCpu::hueChange(oracle::VitaBitmapCpu::Image{ o.w, o.h, o.exp.data() }, hue);
         objs.push_back(o);
         cache[{ f, hue }] = (int)objs.size() - 1;
         return (int)objs.size() - 1;
@@ -257,10 +376,12 @@ int main(int argc, char **argv)
     for (int step = 0; step < steps; ++step) {
         /* pressure phases: big pool tight / loose, vitaGL tight / loose */
         if (step % 400 == 0) {
-            gBigCap = R(0, 2) ? gBigUsed + (size_t)R(2, 12) * kW * kH * 4 : (size_t)1 << 40;
-            gVglFree = R(0, 1) ? (size_t)1 << 20 : (size_t)1 << 30;
+            gBigCap = R(0, 2) ? gBigUsed + (size_t)R(2, 12) * kImg : (size_t)1 << 40;
+            gVglCap = R(0, 1) ? gVglUsed + (size_t)R(45, 90) * kImg : (size_t)1 << 40;   /* paging keeps ~40-56 MiB free */
         }
-        const int op = R(0, 99);
+        int op = R(0, 99);
+        if (objs.size() > 60)
+            op = 99;   /* keep the working set bounded: drop one */
         try {
             if (op < 14) {
                 const int f = R(0, kFiles - 1);
@@ -276,6 +397,7 @@ int main(int argc, char **argv)
                 const int i = R(0, (int)objs.size() - 1);
                 const int hue = R(-400, 400);
                 objs[i].b->hueChange(hue);
+                objs[i].written = true;
                 oracle::VitaBitmapCpu::hueChange(oracle::VitaBitmapCpu::Image{ objs[i].w, objs[i].h, objs[i].exp.data() }, hue);
             } else if (op < 40 && !objs.empty()) {
                 const int i = R(0, (int)objs.size() - 1);
@@ -286,6 +408,7 @@ int main(int argc, char **argv)
                 const int x = R(0, objs[i].w - 1), y = R(0, objs[i].h - 1);
                 const unsigned char c[4] = { (unsigned char)R(0, 255), (unsigned char)R(0, 255), (unsigned char)R(0, 255), (unsigned char)R(0, 255) };
                 objs[i].b->setPixel(x, y, Color(c[0], c[1], c[2], c[3]));
+                objs[i].written = true;
                 std::memcpy(&objs[i].exp[((size_t)y * objs[i].w + x) * 4], c, 4);
             } else if (op < 52 && !objs.empty()) {
                 /* blt from a bitmap into a fresh window-like bitmap: the result must be the oracle
@@ -320,7 +443,10 @@ int main(int argc, char **argv)
                 for (auto &kv : cache)
                     if (kv.second > i) --kv.second;
                 hueTex.erase(objs[i].b);
-                delete objs[i].b;
+                if (R(0, 1))
+                    delete objs[i].b;               /* disposed */
+                else
+                    gGarbage.push_back(objs[i].b);  /* no longer referenced: freed by the next GC */
                 objs.erase(objs.begin() + i);
             }
             /* directed: a CPU decode whose allocation fails although the pool said there was room */
@@ -330,7 +456,7 @@ int main(int argc, char **argv)
                     vitaTexPagingTick();
                 const unsigned before = gBigThrows;
                 const size_t cap = gBigCap;
-                gBigCap = gBigUsed + (size_t)kW * kH * 4 / 2;   /* no room for one more copy */
+                gBigCap = gBigUsed + kImg / 2;   /* no room for one more copy */
                 gStatsLie = true;
                 checkPixel(objs[i], R(0, objs[i].w - 1), R(0, objs[i].h - 1), step, i);
                 gStatsLie = false;
@@ -338,6 +464,32 @@ int main(int argc, char **argv)
                 if (gBigThrows > before)
                     ++retryCases;
             }
+            /* directed: a new image loaded with no room for it anywhere: the retry gives memory back */
+            if (step % 131 == 0) {
+                for (int k = 0; k < 2; ++k)
+                    vitaTexPagingTick();
+                const size_t bc = gBigCap, vc = gVglCap;
+                gBigCap = gBigUsed + kImg / 4;
+                gVglCap = gVglUsed + kImg / 4;
+                const int f = R(0, kFiles - 1);
+                try {
+                    Obj o{ new Bitmap(("img" + std::to_string(f)).c_str()), gFilePx[f], gFileW[f], gFileH[f], false, true };
+                    objs.push_back(o);
+                    ++directedLoads;
+                    checkRender(objs.back(), step, (int)objs.size() - 1);
+                } catch (const Exception &e) {
+                    ++oomErrors;
+                    if (e.msg.find("not enough memory") == std::string::npos)
+                        fail(e.msg.c_str(), step, -2);
+                }
+                gBigCap = bc;
+                gVglCap = vc;
+            }
+        } catch (const Exception &e) {
+            ++oomErrors;
+            if (e.msg.find("not enough memory") == std::string::npos)
+                fail(e.msg.c_str(), step, -3);
+            gBigCap = gVglCap = (size_t)1 << 40;
         } catch (const std::bad_alloc &) {
             ++escapes;   /* only dirty copies or copies used in this frame left: nothing to give back */
             gStatsLie = false;
@@ -346,10 +498,11 @@ int main(int argc, char **argv)
     }
     /* every live bitmap, at the end, after a long idle stretch under pressure */
     gBigCap = gBigUsed + 1;
-    gVglFree = 1 << 20;
+    gVglCap = gVglUsed + (1 << 20);
     for (int k = 0; k < 1500; ++k)
         vitaTexPagingTick();
     gBigCap = (size_t)1 << 40;
+    gVglCap = (size_t)1 << 40;
     for (size_t i = 0; i < objs.size(); ++i) {
         checkRender(objs[i], steps, (int)i);
         checkPixel(objs[i], R(0, objs[i].w - 1), R(0, objs[i].h - 1), steps, (int)i);
@@ -364,7 +517,19 @@ int main(int argc, char **argv)
                 steps, objs.size(), ev, rs, fl, cd, ck, hueRebuilt, hueRebuildChecks, retryCases, gRestoreRetries, gBigThrows, escapes, gFails);
     for (auto &o : objs)
         delete o.b;
-    const bool covered = ev > 0 && rs > 0 && cd > 0 && hueRebuilt > 0 && retryCases > 0;
+    rb_gc_start();
+    unsigned retryOk = 0, retryFail = 0;
+    if (FILE *q = std::fopen((gRoot + "qa.log").c_str(), "r")) {
+        char line[512];
+        while (std::fgets(line, sizeof line, q))
+            if (!std::strncmp(line, "LOAD_RETRY", 10)) (std::strstr(line, " ok=1") ? retryOk : retryFail)++;
+        std::fclose(q);
+        std::remove((gRoot + "qa.log").c_str());
+    }
+    std::printf("cache_entry_loads=%u direct=%u directed_loads=%u load_retry_ok=%u load_retry_fail=%u oom_errors=%u gc_runs=%u tex_ptrs=%u cpu_tex_nomem=%u\n",
+                gEntryLoads, gDirectLoads, directedLoads, retryOk, retryFail, oomErrors, gGcRuns, gDirectPtrs, gCpuTexNoMem);
+    const bool covered = ev > 0 && rs > 0 && cd > 0 && hueRebuilt > 0 && retryCases > 0 &&
+                         gEntryLoads > 0 && gDirectLoads == gEntryLoads && retryOk > 0 && gGcRuns > 1;
     if (!covered)
         std::printf("COVERAGE MISSING\n");
     std::printf("%s\n", gFails == 0 && covered ? "PASS" : "FAIL");

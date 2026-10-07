@@ -533,31 +533,3 @@ bool vitaDecodeAudioAll(SDL_RWops &ops, const char *ext, std::vector<uint8_t> &d
     }
 }
 
-#ifdef MKXP_VITA_ANIM_PREDECODE
-/*
- * vita-predecode.cpp (background thread): the PCM SoundEmitter::allocateBuffer would get for
- * filename, without OpenAL: the candidates of FileSystem::openRead in its order (index-skipped as
- * there), the first that opens and that vitaDecodeAudioAll decodes (SoundOpenHandler::tryRead).
- * false when none does (the main thread then goes the normal way and reports the same error).
- */
-bool vitaDecodeAudioByName(const char *filename, std::vector<uint8_t> &data, int &sampleSize, int &channels, int &rate)
-{
-    static const char *const exts[] = { "", ".ogg", ".wav", ".mp3", ".mid", ".midi" };
-    const std::string base = vitaGamePath(filename);
-    for (const char *ext : exts) {
-#ifdef MKXP_VITA_FS_INDEX
-        if (vitaFsIndexQuery((base + ext).c_str()) == 0)
-            continue;
-#endif
-        SDL_RWops ops;
-        if (!vitaOpenRw(base + ext, ops))
-            continue;
-        const char *e = *ext ? ext + 1 : std::strrchr(base.c_str(), '.') ? std::strrchr(base.c_str(), '.') + 1 : "";
-        std::string err;
-        if (vitaDecodeAudioAll(ops, e, data, sampleSize, channels, rate, err))
-            return true;
-    }
-    data.clear();
-    return false;
-}
-#endif

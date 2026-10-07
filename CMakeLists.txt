@@ -12,13 +12,13 @@ if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
     endif()
 endif()
 
-project(mkxp_vita_minimal LANGUAGES C CXX)
+project(lisa_vita LANGUAGES C CXX)
 
 include("${VITASDK}/share/vita.cmake" REQUIRED)
 
 set(VITA_APP_NAME "Lisa: The Painful" CACHE STRING "LiveArea title")
-set(VITA_TITLEID "MKXP00001" CACHE STRING "Title ID")
-set(VITA_VERSION "01.00")
+set(VITA_TITLEID "LISA00001" CACHE STRING "Title ID")
+set(VITA_VERSION "00.10")
 
 # Dependencies (deps/setup.sh fetches, patches and builds them there).
 set(MKXP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/deps/mkxp-z" CACHE PATH "patched mkxp-z source tree")
@@ -26,11 +26,11 @@ set(RUBY_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/deps/ruby/ruby-3.1.6" CACHE PATH "
 set(RUBY_BUILD_DIR "${CMAKE_CURRENT_SOURCE_DIR}/deps/ruby/build" CACHE PATH "Ruby build directory (libruby-static.a, .ext/include)")
 set(VITA_COMPAT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/deps/vita-compat" CACHE PATH "vita-compat (POSIX shims for Ruby)")
 
-add_executable(mkxp_vita_minimal
+add_executable(lisa_vita
     src/main.cpp
     src/binding-shim.cpp
     src/bitmap-binding-vita.cpp
-    src/bitmap-vita-minimal.cpp
+    src/bitmap-vita.cpp
     src/vita-font.cpp
     common/debugScreen.c
 
@@ -47,7 +47,7 @@ add_executable(mkxp_vita_minimal
     src/gl-fun-vita.cpp
 
     src/shell/config_shim.cpp
-    src/shell/sharedstate_test.cpp
+    src/shell/sharedstate-vita.cpp
 
     ${MKXP_DIR}/src/display/gl/vertex.cpp
     ${MKXP_DIR}/src/display/gl/glstate.cpp
@@ -65,81 +65,43 @@ add_executable(mkxp_vita_minimal
     ${MKXP_DIR}/src/display/plane.cpp
 )
 
-target_compile_definitions(mkxp_vita_minimal PRIVATE
+target_compile_definitions(lisa_vita PRIVATE
     GLES2_HEADER
-    MKXP_VITA_MINIMAL_TEST
+    MKXP_VITA_PORT
 )
 
-target_link_options(mkxp_vita_minimal PRIVATE
+target_link_options(lisa_vita PRIVATE
     -Wl,--undefined=pthread_once
     -Wl,--section-start=.init_array=0x81800000
     -Wl,--gc-sections
     -Wl,-Map=/tmp/mkxp-vita.map
 )
 
-# Diagnostic only: leak one 16-byte block at the start of main() to shift the heap layout.
-option(MKXP_VITA_HEAP_SHIFT_TEST "Allocate 16 bytes before ruby_setup()" OFF)
-if(MKXP_VITA_HEAP_SHIFT_TEST)
-    set_source_files_properties(src/main.cpp PROPERTIES COMPILE_DEFINITIONS MKXP_VITA_HEAP_SHIFT_TEST)
-endif()
-
-# Diagnostic only: reproduce the pthread libruby root fiber allocation (324 bytes) with arm32 libruby.
-option(MKXP_VITA_ROOTFIBER_ALLOC_TEST "Allocate the root rb_fiber_t with the pthread size" OFF)
-if(MKXP_VITA_ROOTFIBER_ALLOC_TEST)
-    target_sources(mkxp_vita_minimal PRIVATE src/vita-rootfiber-alloc-test.cpp)
-    target_link_options(mkxp_vita_minimal PRIVATE -Wl,--wrap=ruby_mimmalloc)
-endif()
-
-# Diagnostic only: pull the libpthread members the pthread Context.o drags in, without calling them.
-option(MKXP_VITA_FORCE_PTHREAD_MEMBERS "Force-link the 5 extra libpthread members" OFF)
-if(MKXP_VITA_FORCE_PTHREAD_MEMBERS)
-    target_link_options(mkxp_vita_minimal PRIVATE
-        -Wl,--undefined=pthread_attr_setstack
-        -Wl,--undefined=pthread_attr_setstackaddr
-        -Wl,--undefined=pthread_cancel
-        -Wl,--undefined=pthread_mutexattr_init
-        -Wl,--undefined=pthread_mutexattr_settype)
-endif()
-
-# Diagnostic only: pull just the pthread_attr_setstack/setstackaddr pair, without calling it.
-option(MKXP_VITA_FORCE_PTHREAD_ATTR_STACK "Force-link pthread_attr_setstack(addr) only" OFF)
-if(MKXP_VITA_FORCE_PTHREAD_ATTR_STACK)
-    target_link_options(mkxp_vita_minimal PRIVATE
-        -Wl,--undefined=pthread_attr_setstack
-        -Wl,--undefined=pthread_attr_setstackaddr)
-endif()
-
-# Diagnostic only: pull just pthread_cancel, without calling it.
-option(MKXP_VITA_FORCE_PTHREAD_CANCEL "Force-link pthread_cancel only" OFF)
-if(MKXP_VITA_FORCE_PTHREAD_CANCEL)
-    target_link_options(mkxp_vita_minimal PRIVATE -Wl,--undefined=pthread_cancel)
-endif()
-
 # Per-frame qa.log markers (FRAME/SWAP_*/FINAL_BLIT_*) in vitaRenderFrame(); ON keeps the old behaviour.
 option(MKXP_VITA_PER_FRAME_QA_LOG "Write per-frame markers to qa.log" ON)
 if(NOT MKXP_VITA_PER_FRAME_QA_LOG)
-    set_property(SOURCE src/shell/sharedstate_test.cpp
+    set_property(SOURCE src/shell/sharedstate-vita.cpp
         APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_NO_PER_FRAME_QA_LOG)
 endif()
 
 # Sync test only: glFinish() right before vglSwapBuffers() in vitaRenderFrame().
 option(MKXP_VITA_GLFINISH_BEFORE_SWAP "Call glFinish() before each vglSwapBuffers()" OFF)
 if(MKXP_VITA_GLFINISH_BEFORE_SWAP)
-    set_property(SOURCE src/shell/sharedstate_test.cpp
+    set_property(SOURCE src/shell/sharedstate-vita.cpp
         APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_GLFINISH_BEFORE_SWAP)
 endif()
 
 # Log bisect only: per-frame qa.log call sites to disable, e.g. "FINAL_BLIT_BEFORE;FINAL_BLIT_AFTER;FRAME".
 set(MKXP_VITA_DISABLE_QA_SITES "" CACHE STRING "Per-frame qa.log call sites to disable")
 foreach(site IN LISTS MKXP_VITA_DISABLE_QA_SITES)
-    set_property(SOURCE src/shell/sharedstate_test.cpp
+    set_property(SOURCE src/shell/sharedstate-vita.cpp
         APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_NO_QA_${site})
 endforeach()
 
 # Timing test only: microseconds of sceKernelDelayThread right before the final blit (0 = off).
 set(MKXP_VITA_PRE_BLIT_DELAY_US 0 CACHE STRING "Pre-blit delay in microseconds (0 = disabled)")
 if(MKXP_VITA_PRE_BLIT_DELAY_US GREATER 0)
-    set_property(SOURCE src/shell/sharedstate_test.cpp
+    set_property(SOURCE src/shell/sharedstate-vita.cpp
         APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_PRE_BLIT_DELAY_US=${MKXP_VITA_PRE_BLIT_DELAY_US})
 endif()
 
@@ -149,21 +111,21 @@ if(MKXP_VITA_DELAY_TOGGLE)
     if(NOT MKXP_VITA_PRE_BLIT_DELAY_US GREATER 0)
         message(FATAL_ERROR "MKXP_VITA_DELAY_TOGGLE requires MKXP_VITA_PRE_BLIT_DELAY_US > 0")
     endif()
-    set_property(SOURCE src/shell/sharedstate_test.cpp
+    set_property(SOURCE src/shell/sharedstate-vita.cpp
         APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_DELAY_TOGGLE)
 endif()
 
 # Timing test only: microseconds of busy-wait (no sleep/yield) right before the final blit (0 = off).
 set(MKXP_VITA_PRE_BLIT_BUSYWAIT_US 0 CACHE STRING "Pre-blit busy-wait in microseconds (0 = disabled)")
 if(MKXP_VITA_PRE_BLIT_BUSYWAIT_US GREATER 0)
-    set_property(SOURCE src/shell/sharedstate_test.cpp
+    set_property(SOURCE src/shell/sharedstate-vita.cpp
         APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_PRE_BLIT_BUSYWAIT_US=${MKXP_VITA_PRE_BLIT_BUSYWAIT_US})
 endif()
 
 # Timing test only: microseconds of sceKernelDelayThread after each vglSwapBuffers (0 = off).
 set(MKXP_VITA_POST_SWAP_DELAY_US 0 CACHE STRING "Post-swap delay in microseconds (0 = disabled)")
 if(MKXP_VITA_POST_SWAP_DELAY_US GREATER 0)
-    set_property(SOURCE src/shell/sharedstate_test.cpp
+    set_property(SOURCE src/shell/sharedstate-vita.cpp
         APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_POST_SWAP_DELAY_US=${MKXP_VITA_POST_SWAP_DELAY_US})
 endif()
 
@@ -172,7 +134,7 @@ endif()
 option(MKXP_VITA_PERF_PROFILE "Time vitaRenderFrame() regions in RAM and print periodic summaries" OFF)
 if(MKXP_VITA_PERF_PROFILE)
     # Also the subsystem timers/counters of mkxp-z/src/vita_perf.h (tilemap/sprite/window, gl table).
-    set_property(SOURCE src/shell/sharedstate_test.cpp
+    set_property(SOURCE src/shell/sharedstate-vita.cpp
                         src/gl-fun-vita.cpp
                         ${MKXP_DIR}/src/display/tilemapvx.cpp
                         ${MKXP_DIR}/src/display/sprite.cpp
@@ -180,14 +142,14 @@ if(MKXP_VITA_PERF_PROFILE)
         APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_PERF_PROFILE)
 endif()
 
-# Profiling only: also append the summaries to ux0:data/ruby_vita_test/perf.log,
+# Profiling only: also append the summaries to <game root>/perf.log,
 # one open/write/close every 300 frames, after vglSwapBuffers.
 option(MKXP_VITA_PERF_PROFILE_FILE "Append MKXP_VITA_PERF_PROFILE summaries to perf.log" OFF)
 if(MKXP_VITA_PERF_PROFILE_FILE)
     if(NOT MKXP_VITA_PERF_PROFILE)
         message(FATAL_ERROR "MKXP_VITA_PERF_PROFILE_FILE requires MKXP_VITA_PERF_PROFILE")
     endif()
-    set_property(SOURCE src/shell/sharedstate_test.cpp
+    set_property(SOURCE src/shell/sharedstate-vita.cpp
         APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_PERF_PROFILE_FILE)
 endif()
 
@@ -197,15 +159,6 @@ option(MKXP_VITA_WINDOW_DEBUG_PRINTS "Keep the WindowVX DBG debug-screen prints"
 if(MKXP_VITA_WINDOW_DEBUG_PRINTS)
     set_property(SOURCE ${MKXP_DIR}/src/display/windowvx.cpp
         APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_WINDOW_DEBUG_PRINTS)
-endif()
-
-# Liveness test only: counts completed vitaRenderFrame() calls and appends to
-# ux0:data/ruby_vita_test/heartbeat.log after vglSwapBuffers at frames 60,120,...,3840,
-# plus one MAP_RENDER_ENTER line with the count at NEW_GAME_ENTER.
-option(MKXP_VITA_HEARTBEAT_LOG "Write heartbeat.log at a few fixed frame counts" OFF)
-if(MKXP_VITA_HEARTBEAT_LOG)
-    set_property(SOURCE src/shell/sharedstate_test.cpp src/main.cpp
-        APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_HEARTBEAT_LOG)
 endif()
 
 # Test only: GLMeta blits (used only by TileAtlasVX::build here) draw a quad with the simple shader
@@ -224,34 +177,7 @@ if(MKXP_VITA_BLIT_PROJ_FIX)
         APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_BLIT_PROJ_FIX)
 endif()
 
-# Diagnostic only: log TilemapVX draw state and dump (TGA) the bound scene framebuffer around the
-# first ground/above DrawElements with groundQuads > 0. Uses glFinish/glReadPixels once. tilemapvx.cpp only.
-option(MKXP_VITA_DUMP_TILEMAP_DRAW "Dump the first TilemapVX draw" OFF)
-if(MKXP_VITA_DUMP_TILEMAP_DRAW)
-    set_property(SOURCE ${MKXP_DIR}/src/display/tilemapvx.cpp
-        APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_DUMP_TILEMAP_DRAW)
-endif()
-
-# Diagnostic only: log and dump (TGA) the first TileAtlasVX::build with source bitmaps to
-# ux0:data/ruby_vita_test/. Uses glFinish/glReadPixels once. Affects tileatlasvx.cpp only.
-option(MKXP_VITA_DUMP_TILEATLAS "Dump the first VX tile atlas and its sources" OFF)
-if(MKXP_VITA_DUMP_TILEATLAS)
-    set_property(SOURCE ${MKXP_DIR}/src/display/gl/tileatlasvx.cpp
-        APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_DUMP_TILEATLAS)
-endif()
-
-# Diagnostic only: logs the first call into the Ruby coroutine backend.
-option(MKXP_VITA_COROUTINE_PROBE "Log first coroutine backend calls to qa.log" OFF)
-if(MKXP_VITA_COROUTINE_PROBE)
-    target_sources(mkxp_vita_minimal PRIVATE src/vita-coroutine-probe.cpp)
-    target_link_options(mkxp_vita_minimal PRIVATE
-        -Wl,--wrap=coroutine_initialize_main
-        -Wl,--wrap=coroutine_initialize
-        -Wl,--wrap=coroutine_transfer
-    )
-endif()
-
-target_compile_options(mkxp_vita_minimal PRIVATE
+target_compile_options(lisa_vita PRIVATE
     $<$<COMPILE_LANGUAGE:C>:-std=gnu17>
     $<$<COMPILE_LANGUAGE:CXX>:-std=gnu++17>
 
@@ -259,7 +185,7 @@ target_compile_options(mkxp_vita_minimal PRIVATE
     -fdata-sections
 )
 
-target_include_directories(mkxp_vita_minimal PRIVATE
+target_include_directories(lisa_vita PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/common
 
     ${RUBY_SRC_DIR}/include
@@ -283,7 +209,7 @@ target_include_directories(mkxp_vita_minimal PRIVATE
 )
 
 set(MKXP_RUBY_STATIC_LIB "${RUBY_BUILD_DIR}/libruby-static.a"
-    CACHE FILEPATH "Ruby static library linked into mkxp_vita_minimal")
+    CACHE FILEPATH "Ruby static library linked into lisa_vita")
 
 # Real Bitmap#clear / clear_rect / fill_rect / gradient_fill_rect / blt on the CPU pixel copy
 # (mkxp-z semantics) instead of the Ruby no-ops of the main.cpp engine stub.
@@ -291,7 +217,7 @@ option(MKXP_VITA_BITMAP_WINDOW_OPS "Real Bitmap clear/clear_rect/fill_rect/gradi
 option(MKXP_VITA_DEBUG_BITMAP_WINDOW "Log Bitmap window operations around battles (needs WINDOW_OPS)" OFF)
 set(VITA_TAG_BMPWIN "")
 if(MKXP_VITA_BITMAP_WINDOW_OPS)
-    set_property(SOURCE src/bitmap-vita-minimal.cpp src/bitmap-binding-vita.cpp src/main.cpp
+    set_property(SOURCE src/bitmap-vita.cpp src/bitmap-binding-vita.cpp src/main.cpp
         APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_BITMAP_WINDOW_OPS)
     set(VITA_TAG_BMPWIN " bitmap_window_ops=ON")
 endif()
@@ -299,11 +225,11 @@ if(MKXP_VITA_DEBUG_BITMAP_WINDOW)
     if(NOT MKXP_VITA_BITMAP_WINDOW_OPS)
         message(FATAL_ERROR "MKXP_VITA_DEBUG_BITMAP_WINDOW requires MKXP_VITA_BITMAP_WINDOW_OPS")
     endif()
-    set_property(SOURCE src/bitmap-vita-minimal.cpp src/bitmap-binding-vita.cpp src/main.cpp
+    set_property(SOURCE src/bitmap-vita.cpp src/bitmap-binding-vita.cpp src/main.cpp
         APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_DEBUG_BITMAP_WINDOW)
 endif()
 
-# Final presentation mode (sharedstate_test.cpp only). Empty = decided by MKXP_VITA_ASPECT_CORRECT
+# Final presentation mode (sharedstate-vita.cpp only). Empty = decided by MKXP_VITA_ASPECT_CORRECT
 # (unchanged behaviour). 0 = fullscreen stretch 960x544 (same code as ASPECT_CORRECT OFF);
 # 1 = aspect 711x544 (same code as ASPECT_CORRECT ON); 2 = pixel-perfect 1x, 544x416 centred
 # (bars 208/208 left/right, 64/64 top/bottom), always NEAREST.
@@ -322,33 +248,33 @@ elseif(MKXP_VITA_PRESENTATION_MODE STREQUAL "2")
     if(MKXP_VITA_FINAL_FILTER STREQUAL "LINEAR")
         message(FATAL_ERROR "MKXP_VITA_PRESENTATION_MODE=2 is a 1:1 copy: MKXP_VITA_FINAL_FILTER must be NEAREST")
     endif()
-    set_property(SOURCE src/shell/sharedstate_test.cpp APPEND PROPERTY
+    set_property(SOURCE src/shell/sharedstate-vita.cpp APPEND PROPERTY
         COMPILE_DEFINITIONS MKXP_VITA_PIXEL_PERFECT)
     set(VITA_TAG_PRESENT " present=pixelperfect_544x416")
 elseif(NOT MKXP_VITA_PRESENTATION_MODE STREQUAL "")
     message(FATAL_ERROR "MKXP_VITA_PRESENTATION_MODE must be empty, 0, 1 or 2")
 endif()
 
-# Final presentation only (sharedstate_test.cpp): 544x416 scaled uniformly to ASPECT_WIDTH x 544,
+# Final presentation only (sharedstate-vita.cpp): 544x416 scaled uniformly to ASPECT_WIDTH x 544,
 # centred with black bars, instead of stretched to 960x544. RGSS resolution unchanged.
 option(MKXP_VITA_ASPECT_CORRECT "Aspect-correct final blit with black side bars" OFF)
 set(MKXP_VITA_ASPECT_WIDTH 711 CACHE STRING "Final blit width with MKXP_VITA_ASPECT_CORRECT (544 px high)")
 set(MKXP_VITA_FINAL_FILTER "NEAREST" CACHE STRING "Final blit filter: NEAREST (current) or LINEAR")
 set(VITA_TAG_ASPECT "")
 if(MKXP_VITA_ASPECT_CORRECT)
-    set_property(SOURCE src/shell/sharedstate_test.cpp APPEND PROPERTY
+    set_property(SOURCE src/shell/sharedstate-vita.cpp APPEND PROPERTY
         COMPILE_DEFINITIONS MKXP_VITA_ASPECT_CORRECT MKXP_VITA_ASPECT_WIDTH=${MKXP_VITA_ASPECT_WIDTH})
     set(VITA_TAG_ASPECT " aspect=${MKXP_VITA_ASPECT_WIDTH}x544")
 endif()
 if(MKXP_VITA_FINAL_FILTER STREQUAL "LINEAR")
-    set_property(SOURCE src/shell/sharedstate_test.cpp APPEND PROPERTY
+    set_property(SOURCE src/shell/sharedstate-vita.cpp APPEND PROPERTY
         COMPILE_DEFINITIONS MKXP_VITA_FINAL_FILTER_LINEAR)
     set(VITA_TAG_ASPECT "${VITA_TAG_ASPECT} final_filter=linear")
 elseif(MKXP_VITA_FINAL_FILTER STREQUAL "SHARP_BILINEAR")
     if(NOT MKXP_VITA_ASPECT_CORRECT)
         message(FATAL_ERROR "MKXP_VITA_FINAL_FILTER=SHARP_BILINEAR is implemented for the aspect-correct presentation")
     endif()
-    set_property(SOURCE src/shell/sharedstate_test.cpp APPEND PROPERTY
+    set_property(SOURCE src/shell/sharedstate-vita.cpp APPEND PROPERTY
         COMPILE_DEFINITIONS MKXP_VITA_FINAL_SHARP_BILINEAR)
     set(VITA_TAG_ASPECT "${VITA_TAG_ASPECT} final_filter=sharp_bilinear")
 elseif(NOT MKXP_VITA_FINAL_FILTER STREQUAL "NEAREST")
@@ -363,34 +289,25 @@ if(MKXP_VITA_DEBUG_TEXT_LOG)
 endif()
 
 # Diagnostic only: log every Bitmap stretch_blt/radial_blur to qa.log and dump the first 8
-# results as TGA (ux0:data/ruby_vita_test/bmpdump_NN_<op>.tga). Affects bitmap-vita-minimal.cpp only.
+# results as TGA (<game root>/bmpdump_NN_<op>.tga). Affects bitmap-vita.cpp only.
 option(MKXP_VITA_DEBUG_BITMAP_DUMP "Log and dump Bitmap CPU operations" OFF)
 if(MKXP_VITA_DEBUG_BITMAP_DUMP)
-    set_property(SOURCE src/bitmap-vita-minimal.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_DEBUG_BITMAP_DUMP)
+    set_property(SOURCE src/bitmap-vita.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_DEBUG_BITMAP_DUMP)
 endif()
 
 # Debug only, never in a normal build: boot shortcuts to the first battle (map 41 event 2, troop 3).
-# CHECKPOINT: if ux0:data/ruby_vita_test/debug_checkpoint_battle1.rvdata2 exists, load it and boot
+# CHECKPOINT: if <game root>/debug_checkpoint_battle1.rvdata2 exists, load it and boot
 # into Scene_Map; otherwise boot normally and record it on the first idle frame on map 41.
-# DIRECT_BATTLE: renderer/binding harness, new game straight into Scene_Battle with troop 3.
 option(MKXP_VITA_DEBUG_BOOT_CHECKPOINT "DEBUG: boot from/record the pre-first-battle checkpoint" OFF)
 # DEBUG: soak test (map transfers, menu, battles in a loop) when R is held at boot; never saves.
 option(MKXP_VITA_DEBUG_SOAK "DEBUG: soak test while R is held at boot (soak.log)" OFF)
 if(MKXP_VITA_DEBUG_SOAK)
     set_property(SOURCE src/main.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_DEBUG_SOAK)
 endif()
-option(MKXP_VITA_DEBUG_DIRECT_BATTLE "DEBUG: boot straight into Scene_Battle (troop 3)" OFF)
-if(MKXP_VITA_DEBUG_BOOT_CHECKPOINT AND MKXP_VITA_DEBUG_DIRECT_BATTLE)
-    message(FATAL_ERROR "MKXP_VITA_DEBUG_BOOT_CHECKPOINT and MKXP_VITA_DEBUG_DIRECT_BATTLE are exclusive")
-endif()
 set(VITA_TAG_DEBUG_BOOT "")
 if(MKXP_VITA_DEBUG_BOOT_CHECKPOINT)
     set_property(SOURCE src/main.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_DEBUG_BOOT_CHECKPOINT)
     set(VITA_TAG_DEBUG_BOOT " debug_boot=checkpoint")
-endif()
-if(MKXP_VITA_DEBUG_DIRECT_BATTLE)
-    set_property(SOURCE src/main.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_DEBUG_DIRECT_BATTLE)
-    set(VITA_TAG_DEBUG_BOOT " debug_boot=direct_battle")
 endif()
 
 # Diagnostic only (vita_diag.cpp, mkxp-z/src/vita_diag.h). Both OFF by default; OFF = no code.
@@ -406,8 +323,8 @@ set(VITA_TAG_DIAG "")
 if(MKXP_VITA_DEBUG_SOAK)
     set(VITA_TAG_DIAG " soak=R_at_boot")
 endif()
-set(VITA_DIAG_SOURCES src/main.cpp src/gl-fun-vita.cpp src/bitmap-vita-minimal.cpp src/bitmap-binding-vita.cpp
-    src/vita-font.cpp src/vita_diag.cpp src/shell/sharedstate_test.cpp
+set(VITA_DIAG_SOURCES src/main.cpp src/gl-fun-vita.cpp src/bitmap-vita.cpp src/bitmap-binding-vita.cpp
+    src/vita-font.cpp src/vita_diag.cpp src/shell/sharedstate-vita.cpp
     ${MKXP_DIR}/src/display/tilemapvx.cpp ${MKXP_DIR}/src/display/windowvx.cpp)
 if(MKXP_VITA_TIMELINE)
     set_property(SOURCE ${VITA_DIAG_SOURCES} APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_TIMELINE)
@@ -421,35 +338,13 @@ if(MKXP_VITA_PERF_BITMAP)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} perf_bitmap=ON")
 endif()
 if(MKXP_VITA_TIMELINE OR MKXP_VITA_PERF_BITMAP)
-    target_sources(mkxp_vita_minimal PRIVATE src/vita_diag.cpp)
-endif()
-
-# Diagnostic only: tileset/atlas state to ux0:data/ruby_vita_test/tileset.log: Ruby map/tileset
-# names and slot bitmaps, Bitmap loads/releases, TilemapVX slot changes/rebuilds, and after each
-# atlas build a pixel comparison atlas vs sources + source texture vs PNG; first 8 atlases as TGA.
-option(MKXP_VITA_DEBUG_TILESET "Tileset/atlas diagnostics to tileset.log" OFF)
-# Heavy part (20-25 s per atlas build): TGA dumps of the first 8 atlases + source texture vs PNG.
-option(MKXP_VITA_DEBUG_TILESET_DUMP "With DEBUG_TILESET: also atlas TGA dumps and PNG re-verification" OFF)
-if(MKXP_VITA_DEBUG_TILESET_DUMP)
-    if(NOT MKXP_VITA_DEBUG_TILESET)
-        message(FATAL_ERROR "MKXP_VITA_DEBUG_TILESET_DUMP requires MKXP_VITA_DEBUG_TILESET")
-    endif()
-    set_property(SOURCE ${MKXP_DIR}/src/display/gl/tileatlasvx.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_DEBUG_TILESET_DUMP)
-endif()
-if(MKXP_VITA_DEBUG_TILESET)
-    set_property(SOURCE src/main.cpp src/bitmap-vita-minimal.cpp src/bitmap-binding-vita.cpp
-                        ${MKXP_DIR}/src/display/tilemapvx.cpp ${MKXP_DIR}/src/display/gl/tileatlasvx.cpp
-        APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_DEBUG_TILESET)
-    set(VITA_TAG_DIAG "${VITA_TAG_DIAG} debug_tileset=ON")
+    target_sources(lisa_vita PRIVATE src/vita_diag.cpp)
 endif()
 
 # Debug only: "map,x,y" = new game placed straight on that map (e.g. "22,60,16"). Empty = off.
 set(MKXP_VITA_DEBUG_BOOT_MAP "" CACHE STRING "DEBUG: boot a new game on map,x,y")
 if(NOT MKXP_VITA_DEBUG_BOOT_MAP STREQUAL "")
     # With MKXP_VITA_DEBUG_BOOT_CHECKPOINT: map boot only while L is held at startup, else checkpoint.
-    if(MKXP_VITA_DEBUG_DIRECT_BATTLE)
-        message(FATAL_ERROR "MKXP_VITA_DEBUG_BOOT_MAP is exclusive with MKXP_VITA_DEBUG_DIRECT_BATTLE")
-    endif()
     string(REPLACE "," ";" VITA_BOOT_MAP_LIST "${MKXP_VITA_DEBUG_BOOT_MAP}")
     list(LENGTH VITA_BOOT_MAP_LIST VITA_BOOT_MAP_N)
     if(NOT VITA_BOOT_MAP_N EQUAL 3)
@@ -471,36 +366,36 @@ endif()
 # Fix: Input keys as Symbol or Integer (event button conditions: jump etc.) and the LISA layout
 # (Triangle=R, Square=X, Cross=C+Y, Circle=B+Z, L=L+A, R=R). main.cpp only.
 option(MKXP_VITA_INPUT_V2 "Integer RGSS keys + LISA combo button layout" OFF)
-# Fix: save files under ux0:data/ruby_vita_test/ and save_file_exists? without Dir.glob. main.cpp only.
-option(MKXP_VITA_SAVE_PATH "Save files in ux0:data/ruby_vita_test/" OFF)
+# Fix: save files under <game root>/ and save_file_exists? without Dir.glob. main.cpp only.
+option(MKXP_VITA_SAVE_PATH "Save files in the game root" OFF)
 # Diagnostic only: scene/save/flash breadcrumbs to breadcrumb.log (native crash localisation). main.cpp only.
 option(MKXP_VITA_SCENE_BREADCRUMB "Scene/save breadcrumbs to breadcrumb.log" OFF)
 # Fix: Graphics.brightness/fadeout/fadein/freeze/transition/snap_to_bitmap and Bitmap#blur.
 option(MKXP_VITA_SCREEN_FX "Real Graphics brightness/freeze/transition/snap and Bitmap#blur" OFF)
-# Fix: Viewport tone (RGB) / color / flash rendering (sharedstate_test.cpp only).
+# Fix: Viewport tone (RGB) / color / flash rendering (sharedstate-vita.cpp only).
 option(MKXP_VITA_VIEWPORT_FX "Viewport tone/color/flash effects" OFF)
-# Fix: TexPool without caching (sharedstate_test.cpp only): cached FBOs keep vitaGL render targets.
+# Fix: TexPool without caching (sharedstate-vita.cpp only): cached FBOs keep vitaGL render targets.
 option(MKXP_VITA_TEXPOOL_NO_CACHE "Delete released TexPool objects instead of caching them" OFF)
 if(MKXP_VITA_TEXPOOL_NO_CACHE)
-    set_property(SOURCE src/shell/sharedstate_test.cpp
+    set_property(SOURCE src/shell/sharedstate-vita.cpp
         APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_TEXPOOL_NO_CACHE)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} texpool_no_cache=ON")
 endif()
-# Perf: Bitmap#radial_blur on the GPU (mkxp-z geometry) + readback (bitmap-vita-minimal.cpp only).
+# Perf: Bitmap#radial_blur on the GPU (mkxp-z geometry) + readback (bitmap-vita.cpp only).
 option(MKXP_VITA_GPU_RADIAL_BLUR "GPU radial_blur with readback into the CPU copy" OFF)
 if(MKXP_VITA_GPU_RADIAL_BLUR)
-    set_property(SOURCE src/bitmap-vita-minimal.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_GPU_RADIAL_BLUR)
+    set_property(SOURCE src/bitmap-vita.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_GPU_RADIAL_BLUR)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} gpu_radial_blur=ON")
 endif()
-# Perf: a file bitmap used as blt/stretch_blt source keeps its decoded pixels (bitmap-vita-minimal.cpp only).
+# Perf: a file bitmap used as blt/stretch_blt source keeps its decoded pixels (bitmap-vita.cpp only).
 option(MKXP_VITA_BLT_SOURCE_KEEP_CPU "Keep the CPU copy of file bitmaps used as blt sources" OFF)
 if(MKXP_VITA_BLT_SOURCE_KEEP_CPU)
-    set_property(SOURCE src/bitmap-vita-minimal.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_BLT_SOURCE_KEEP_CPU)
+    set_property(SOURCE src/bitmap-vita.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_BLT_SOURCE_KEEP_CPU)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} blt_source_keep_cpu=ON")
 endif()
 # The patched vitaGL built by deps/setup.sh (deps/vitaGL/libvitaGL.a: NO_SPLASHSCREEN=1 LOG_ERRORS=1
-# MKXP_DIAG=1 SINGLE_THREADED_GC=1 MKXP_NO_FBO_DEPTH=1), with its own vitaGL.h; its error log goes to
-# <game root>/vitagl.log. Empty = the vitaGL installed in VITASDK.
+# MKXP_DIAG=1 SINGLE_THREADED_GC=1 MKXP_NO_FBO_DEPTH=1 HAVE_SHADER_CACHE=1), with its own vitaGL.h; its
+# error log goes to <game root>/vitagl.log. Empty = the vitaGL installed in VITASDK.
 if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/deps/vitaGL/libvitaGL.a)
     set(VITA_VITAGL_DEFAULT ${CMAKE_CURRENT_SOURCE_DIR}/deps/vitaGL/libvitaGL.a)
 else()
@@ -513,16 +408,16 @@ else()
     set(VITA_VITAGL_LIB ${MKXP_VITA_VITAGL_LIB})
     get_filename_component(VITA_VITAGL_DIR ${MKXP_VITA_VITAGL_LIB} DIRECTORY)
     if(EXISTS ${VITA_VITAGL_DIR}/source/vitaGL.h)
-        target_include_directories(mkxp_vita_minimal BEFORE PRIVATE ${VITA_VITAGL_DIR}/source)
+        target_include_directories(lisa_vita BEFORE PRIVATE ${VITA_VITAGL_DIR}/source)
     endif()
     set_property(SOURCE src/gl-fun-vita.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_VITAGL_DIAG)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} vitagl=diag")
 endif()
 
-# Game data root (mkxp-z/src/vita_paths.h). Empty = "ux0:data/ruby_vita_test/". Must end with '/'.
-set(MKXP_VITA_GAME_ROOT "" CACHE STRING "Game data directory on the Vita, e.g. ux0:data/lisa/")
+# Game data root (mkxp-z/src/vita_paths.h; empty = its default). Must end with '/'.
+set(MKXP_VITA_GAME_ROOT "ux0:data/lisa_vita/" CACHE STRING "Game data directory on the Vita (ends with /)")
 if(NOT MKXP_VITA_GAME_ROOT STREQUAL "")
-    target_compile_definitions(mkxp_vita_minimal PRIVATE "MKXP_VITA_GAME_ROOT=\"${MKXP_VITA_GAME_ROOT}\"")
+    target_compile_definitions(lisa_vita PRIVATE "MKXP_VITA_GAME_ROOT=\"${MKXP_VITA_GAME_ROOT}\"")
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} game_root=${MKXP_VITA_GAME_ROOT}")
 endif()
 
@@ -530,14 +425,14 @@ endif()
 # textures rendered into as FBO attachments and could free them while the GPU still writes them.
 option(MKXP_VITA_DEFERRED_GL_DELETE "Delete TEXFBO objects a few swaps after release" OFF)
 if(MKXP_VITA_DEFERRED_GL_DELETE)
-    target_compile_definitions(mkxp_vita_minimal PRIVATE MKXP_VITA_DEFERRED_GL_DELETE)
+    target_compile_definitions(lisa_vita PRIVATE MKXP_VITA_DEFERRED_GL_DELETE)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} deferred_gl_delete=ON")
 endif()
 # Fix: RGSS Bitmap#get_pixel / set_pixel / hue_change (text colours come from get_pixel on the
 # windowskin) and a Graphics.play_movie no-op.
 option(MKXP_VITA_RGSS_COMPAT "Real get_pixel/set_pixel/hue_change + play_movie stub" OFF)
 if(MKXP_VITA_RGSS_COMPAT)
-    set_property(SOURCE src/main.cpp src/bitmap-vita-minimal.cpp src/bitmap-binding-vita.cpp
+    set_property(SOURCE src/main.cpp src/bitmap-vita.cpp src/bitmap-binding-vita.cpp
         APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_RGSS_COMPAT)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} rgss_compat=ON")
 endif()
@@ -545,7 +440,7 @@ endif()
 # (bitmap-vita-cpu.h; host-verified identical output).
 option(MKXP_VITA_FAST_CPU_KERNELS "Faster exact CPU bitmap kernels" OFF)
 if(MKXP_VITA_FAST_CPU_KERNELS)
-    set_property(SOURCE src/bitmap-vita-minimal.cpp src/vita-font.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_FAST_CPU_KERNELS)
+    set_property(SOURCE src/bitmap-vita.cpp src/vita-font.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_FAST_CPU_KERNELS)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} fast_cpu_kernels=ON")
 endif()
 # Perf fix: Tone notifies valueChanged only on a real change (etc.cpp only). Window_Base#update_tone
@@ -561,13 +456,13 @@ if(MKXP_VITA_TEXT_CACHE)
     set_property(SOURCE src/vita-font.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_TEXT_CACHE)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} text_cache=ON")
 endif()
-# Perf: LRU cache (8 MiB) of decoded PNG files (bitmap-vita-minimal.cpp only).
+# Perf: LRU cache (8 MiB) of decoded PNG files (bitmap-vita.cpp only).
 option(MKXP_VITA_PNG_CACHE "Cache decoded PNG files" OFF)
 if(MKXP_VITA_PNG_CACHE)
-    set_property(SOURCE src/bitmap-vita-minimal.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_PNG_CACHE)
+    set_property(SOURCE src/bitmap-vita.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_PNG_CACHE)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} png_cache=ON")
 endif()
-# Perf: one texture upload per modified Bitmap when the GPU needs it (bitmap-vita-minimal.cpp only).
+# Perf: one texture upload per modified Bitmap when the GPU needs it (bitmap-vita.cpp only).
 option(MKXP_VITA_BITMAP_DEFERRED_UPLOAD "Defer Bitmap texture uploads to first GPU use" OFF)
 # RGSS3 argument parsing as mkxp-z (binding-shim.cpp): all rb_get_args formats (o S s z f i b n |),
 # upstream int/float/bool coercions and arity checks. Required by the upstream audio binding ('z').
@@ -585,7 +480,7 @@ if(MKXP_VITA_AUDIO)
     if(NOT MKXP_VITA_RGSS_ARGS_V2)
         message(FATAL_ERROR "MKXP_VITA_AUDIO requires MKXP_VITA_RGSS_ARGS_V2 (the audio binding uses rb_get_args 'z')")
     endif()
-    target_sources(mkxp_vita_minimal PRIVATE
+    target_sources(lisa_vita PRIVATE
         src/vita-audio-backend.cpp
         ${MKXP_DIR}/src/audio/audio.cpp
         ${MKXP_DIR}/src/audio/audiostream.cpp
@@ -593,8 +488,8 @@ if(MKXP_VITA_AUDIO)
         ${MKXP_DIR}/src/audio/soundemitter.cpp
         ${MKXP_DIR}/src/audio/vorbissource.cpp
         ${MKXP_DIR}/binding/audio-binding.cpp)
-    target_compile_definitions(mkxp_vita_minimal PRIVATE MKXP_VITA_AUDIO MKXPZ_ALCDEVICE=ALCdevice_struct)
-    target_include_directories(mkxp_vita_minimal PRIVATE ${MKXP_DIR}/src/audio ${MKXP_DIR}/src/filesystem
+    target_compile_definitions(lisa_vita PRIVATE MKXP_VITA_AUDIO MKXPZ_ALCDEVICE=ALCdevice_struct)
+    target_include_directories(lisa_vita PRIVATE ${MKXP_DIR}/src/audio ${MKXP_DIR}/src/filesystem
         ${MKXP_DIR}/src/input $ENV{VITASDK}/arm-vita-eabi/include/AL)
     set(VITA_AUDIO_LIBS openal vorbisfile vorbis ogg)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} audio=ON")
@@ -631,17 +526,17 @@ if(MKXP_VITA_RENDER_EXC)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} render_exc=ON")
 endif()
 # Fix: PNG files decoded straight into the texture memory (no newlib heap buffer). Needs
-# MKXP_VITA_BITMAP_NO_FBO. bitmap-vita-minimal.cpp only.
+# MKXP_VITA_BITMAP_NO_FBO. bitmap-vita.cpp only.
 option(MKXP_VITA_PNG_DIRECT "Decode PNG files straight into texture memory" OFF)
 if(MKXP_VITA_PNG_DIRECT)
-    set_property(SOURCE src/bitmap-vita-minimal.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_PNG_DIRECT)
+    set_property(SOURCE src/bitmap-vita.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_PNG_DIRECT)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} png_direct=ON")
 endif()
 # Perf fix: Bitmap#hue_change memoized per rgb (exact), and Bitmap#clone of a file bitmap decodes the
-# PNG straight into the clone (no 4.4 MiB CPU copy left in the Cache source). bitmap-vita-minimal.cpp.
+# PNG straight into the clone (no 4.4 MiB CPU copy left in the Cache source). bitmap-vita.cpp.
 option(MKXP_VITA_HUE_FAST "Memoized hue_change and direct clone decode" OFF)
 if(MKXP_VITA_HUE_FAST)
-    set_property(SOURCE src/bitmap-vita-minimal.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_HUE_FAST)
+    set_property(SOURCE src/bitmap-vita.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_HUE_FAST)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} hue_fast=ON")
 endif()
 # Light diagnostic: Cache.load_bitmap calls slower than 300 ms -> slow_load.log (path, hue, ms). main.cpp.
@@ -673,27 +568,18 @@ endif()
 option(MKXP_VITA_CPU_444 "ARM clock 444 MHz" OFF)
 if(MKXP_VITA_CPU_444)
     set_property(SOURCE src/main.cpp src/vita_diag.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_CPU_444)
-    target_link_libraries(mkxp_vita_minimal ScePower_stub)
+    target_link_libraries(lisa_vita ScePower_stub)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} cpu_444=ON")
 endif()
 # Perf fix: the runtime pre-blit delay (MKXP_VITA_DELAY_TOGGLE) starts at 0 us instead of
-# MKXP_VITA_PRE_BLIT_DELAY_US. sharedstate_test.cpp.
+# MKXP_VITA_PRE_BLIT_DELAY_US. sharedstate-vita.cpp.
 option(MKXP_VITA_DELAY_START_ZERO "Pre-blit delay starts at 0 (SELECT cycles as before)" OFF)
 if(MKXP_VITA_DELAY_START_ZERO)
     if(NOT MKXP_VITA_DELAY_TOGGLE)
         message(FATAL_ERROR "MKXP_VITA_DELAY_START_ZERO requires MKXP_VITA_DELAY_TOGGLE")
     endif()
-    set_property(SOURCE src/shell/sharedstate_test.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_DELAY_START_ZERO)
+    set_property(SOURCE src/shell/sharedstate-vita.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_DELAY_START_ZERO)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} delay_start_zero=ON")
-endif()
-# Test: L held at boot applies tuned RUBY_GC_* parameters (A/B in one build). main.cpp; needs RUBY_PROF.
-option(MKXP_VITA_GC_TUNE_L "L at boot: tuned Ruby GC parameters" OFF)
-if(MKXP_VITA_GC_TUNE_L)
-    if(NOT MKXP_VITA_RUBY_PROF)
-        message(FATAL_ERROR "MKXP_VITA_GC_TUNE_L requires MKXP_VITA_RUBY_PROF")
-    endif()
-    set_property(SOURCE src/main.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_GC_TUNE_L)
-    set(VITA_TAG_DIAG "${VITA_TAG_DIAG} gc_tune_l=ON")
 endif()
 # Perf fix: character sprites far off screen skip Sprite_Character#update (L+R+START toggles). main.cpp.
 option(MKXP_VITA_OFFSCREEN_SPRITES "Skip updates of off-screen character sprites" OFF)
@@ -704,9 +590,6 @@ endif()
 # Perf fix: Ruby GC parameters between defaults and the d40 L set (L at boot = defaults). main.cpp.
 option(MKXP_VITA_GC_MID "Medium Ruby GC parameters" OFF)
 if(MKXP_VITA_GC_MID)
-    if(MKXP_VITA_GC_TUNE_L)
-        message(FATAL_ERROR "MKXP_VITA_GC_MID and MKXP_VITA_GC_TUNE_L are exclusive")
-    endif()
     set_property(SOURCE src/main.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_GC_MID)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} gc_mid=ON")
 endif()
@@ -722,18 +605,18 @@ if(MKXP_VITA_SPRITE_FAST)
     set_property(SOURCE src/main.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_SPRITE_FAST)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} sprite_fast=ON")
 endif()
-# Light diagnostic: frame-time percentiles and counts per PERF window (fp50/fp90/fp99, f_over*). sharedstate_test.cpp.
+# Light diagnostic: frame-time percentiles and counts per PERF window (fp50/fp90/fp99, f_over*). sharedstate-vita.cpp.
 option(MKXP_VITA_FRAME_HIST "PERF frame-time distribution" OFF)
 if(MKXP_VITA_FRAME_HIST)
-    set_property(SOURCE src/shell/sharedstate_test.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_FRAME_HIST)
+    set_property(SOURCE src/shell/sharedstate-vita.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_FRAME_HIST)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} frame_hist=ON")
 endif()
-# Perf fix: decoded large PNGs cached on the memory card as LZ4 (<game root>/cache/). bitmap-vita-minimal.cpp.
+# Perf fix: decoded large PNGs cached on the memory card as LZ4 (<game root>/cache/). bitmap-vita.cpp.
 option(MKXP_VITA_IMG_DISK_CACHE "Disk cache of decoded large images (LZ4)" OFF)
 if(MKXP_VITA_IMG_DISK_CACHE)
-    target_sources(mkxp_vita_minimal PRIVATE src/vita-image-cache.cpp third_party/lz4/lz4.c)
+    target_sources(lisa_vita PRIVATE src/vita-image-cache.cpp third_party/lz4/lz4.c)
     set_property(SOURCE third_party/lz4/lz4.c APPEND PROPERTY COMPILE_DEFINITIONS LZ4_HEAPMODE=1)
-    set_property(SOURCE src/bitmap-vita-minimal.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_IMG_DISK_CACHE)
+    set_property(SOURCE src/bitmap-vita.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_IMG_DISK_CACHE)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} img_disk_cache=ON")
 endif()
 # Perf fix: Galv Region Effects keeps the unchanged region sprites instead of recreating all at each step. main.cpp.
@@ -749,7 +632,7 @@ if(MKXP_VITA_BIG_READS)
     if(NOT MKXP_VITA_IMG_DISK_CACHE)
         message(FATAL_ERROR "MKXP_VITA_BIG_READS requires MKXP_VITA_IMG_DISK_CACHE")
     endif()
-    set_property(SOURCE src/bitmap-vita-minimal.cpp src/vita-audio-backend.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_BIG_READS)
+    set_property(SOURCE src/bitmap-vita.cpp src/vita-audio-backend.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_BIG_READS)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} big_reads=ON")
 endif()
 # Fix: empty glDrawElements / glBufferSubData skipped in the gl table (GL no-ops; vitaGL logged an error). gl-fun-vita.cpp.
@@ -767,8 +650,8 @@ endif()
 # Perf fix: main thread pinned to user core 0, other threads to cores 1-2 (vita-thread-affinity.cpp).
 option(MKXP_VITA_CORE0_MAIN "Main thread alone on core 0" OFF)
 if(MKXP_VITA_CORE0_MAIN)
-    target_sources(mkxp_vita_minimal PRIVATE src/vita-thread-affinity.cpp)
-    target_link_options(mkxp_vita_minimal PRIVATE -Wl,--wrap=sceKernelCreateThread)
+    target_sources(lisa_vita PRIVATE src/vita-thread-affinity.cpp)
+    target_link_options(lisa_vita PRIVATE -Wl,--wrap=sceKernelCreateThread)
     set_property(SOURCE src/main.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_CORE0_MAIN)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} core0_main=ON")
 endif()
@@ -784,7 +667,7 @@ endif()
 # Perf fix: Sprite_Character#update_position in C, installed after a boot self-test (vita-sprite-native.cpp).
 option(MKXP_VITA_SPRITE_NATIVE "Native Sprite_Character#update_position" OFF)
 if(MKXP_VITA_SPRITE_NATIVE)
-    target_sources(mkxp_vita_minimal PRIVATE src/vita-sprite-native.cpp)
+    target_sources(lisa_vita PRIVATE src/vita-sprite-native.cpp)
     set_property(SOURCE src/vita-sprite-native.cpp APPEND PROPERTY COMPILE_OPTIONS -ffp-contract=off)
     set_property(SOURCE src/main.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_SPRITE_NATIVE)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} sprite_native=ON")
@@ -799,7 +682,7 @@ endif()
 # last-answer memo of the font lookups (vita-font.cpp).
 option(MKXP_VITA_BLT_1TO1 "Integer 1:1 blit path" OFF)
 if(MKXP_VITA_BLT_1TO1)
-    set_property(SOURCE src/bitmap-vita-minimal.cpp src/vita-font.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_BLT_1TO1)
+    set_property(SOURCE src/bitmap-vita.cpp src/vita-font.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_BLT_1TO1)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} blt_1to1=ON")
 endif()
 option(MKXP_VITA_FONT_MEMO "Memo of the last font lookups" OFF)
@@ -810,7 +693,7 @@ endif()
 # Perf fix: memo of the float blend result per (texel, pixel, opacity) in the CPU blit kernel. bitmap-vita-cpu.h.
 option(MKXP_VITA_BLEND_MEMO "Blend result memo in the blit kernel" OFF)
 if(MKXP_VITA_BLEND_MEMO)
-    set_property(SOURCE src/bitmap-vita-minimal.cpp src/vita-font.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_BLEND_MEMO)
+    set_property(SOURCE src/bitmap-vita.cpp src/vita-font.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_BLEND_MEMO)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} blend_memo=ON")
 endif()
 # Steady 30 fps: logic at 60 steps/s, every other step rendered, 2-vblank swap (L+R+SELECT: 30 <-> 60). main.cpp.
@@ -896,17 +779,17 @@ if(MKXP_VITA_OOM_LOG)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} oom_log=ON")
 endif()
 # Fix: textures of Bitmaps still equal to their PNG file are released under vitaGL memory pressure
-# (least recently used, idle >= 10 s) and rebuilt from the file when used again. bitmap-vita-minimal.cpp.
+# (least recently used, idle >= 10 s) and rebuilt from the file when used again. bitmap-vita.cpp.
 option(MKXP_VITA_TEX_PAGING "Page out idle file-backed bitmap textures when GPU memory is low" OFF)
 if(MKXP_VITA_TEX_PAGING)
-    set_property(SOURCE src/main.cpp src/bitmap-vita-minimal.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_TEX_PAGING)
+    set_property(SOURCE src/main.cpp src/bitmap-vita.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_TEX_PAGING)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} tex_paging=ON")
 endif()
 # Fix: released tile atlases are parked and reused (no 8 MiB allocation per map change);
-# tile atlas build raises instead of crashing when out of memory. sharedstate_test.cpp, tileatlasvx.cpp.
+# tile atlas build raises instead of crashing when out of memory. sharedstate-vita.cpp, tileatlasvx.cpp.
 option(MKXP_VITA_ATLAS_PARK "Reuse released tile atlas textures" OFF)
 if(MKXP_VITA_ATLAS_PARK)
-    set_property(SOURCE src/shell/sharedstate_test.cpp src/gl-fun-vita.cpp
+    set_property(SOURCE src/shell/sharedstate-vita.cpp src/gl-fun-vita.cpp
                         ${MKXP_DIR}/src/display/gl/tileatlasvx.cpp
         APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_ATLAS_PARK)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} atlas_park=ON")
@@ -915,14 +798,14 @@ endif()
 # scripts; Bitmap.new accepts app0: paths. Files: patches/ (added to the VPK below). main.cpp.
 option(MKXP_VITA_PATCHES "Load the game patches shipped in app0:patches/" OFF)
 if(MKXP_VITA_PATCHES)
-    set_property(SOURCE src/main.cpp src/bitmap-vita-minimal.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_PATCHES)
+    set_property(SOURCE src/main.cpp src/bitmap-vita.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_PATCHES)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} patches=ON")
 endif()
 # Fix: the scene framebuffers get a depth/stencil surface, so vitaGL's scissor is exact (window
-# contents / viewports clipped at the pixel instead of the GPU tile). sharedstate_test.cpp.
+# contents / viewports clipped at the pixel instead of the GPU tile). sharedstate-vita.cpp.
 option(MKXP_VITA_SCENE_STENCIL "Depth/stencil surface on the scene framebuffers (exact scissor)" OFF)
 if(MKXP_VITA_SCENE_STENCIL)
-    set_property(SOURCE src/shell/sharedstate_test.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_SCENE_STENCIL)
+    set_property(SOURCE src/shell/sharedstate-vita.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_SCENE_STENCIL)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} scene_stencil=ON")
 endif()
 # Perf fix: Game_Event#update fast path (EVENT_FAST) in C, installed after a boot self-test.
@@ -931,7 +814,7 @@ if(MKXP_VITA_EVENT_NATIVE)
     if(NOT MKXP_VITA_EVENT_FAST)
         message(FATAL_ERROR "MKXP_VITA_EVENT_NATIVE requires MKXP_VITA_EVENT_FAST")
     endif()
-    target_sources(mkxp_vita_minimal PRIVATE src/vita-event-native.cpp)
+    target_sources(lisa_vita PRIVATE src/vita-event-native.cpp)
     set_property(SOURCE src/main.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_EVENT_NATIVE)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} event_native=ON")
 endif()
@@ -944,15 +827,6 @@ if(MKXP_VITA_FIBER_CORE0)
     endif()
     set_property(SOURCE src/vita-pthread-parms.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_FIBER_CORE0)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} fiber_core0=ON")
-endif()
-# Diagnostic: one thread-handoff benchmark (pthread cond vs kernel semaphores, core 0 vs 1-2) after
-# 1800 Graphics.update calls (qa.log HANDOFF_BENCH) + pthread_join time on the PERF line.
-option(MKXP_VITA_HANDOFF_BENCH "Thread handoff benchmark + pthread_join timing" OFF)
-if(MKXP_VITA_HANDOFF_BENCH)
-    target_sources(mkxp_vita_minimal PRIVATE src/vita-handoff-bench.cpp)
-    target_link_options(mkxp_vita_minimal PRIVATE -Wl,--wrap=pthread_join)
-    set_property(SOURCE src/main.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_HANDOFF_BENCH)
-    set(VITA_TAG_DIAG "${VITA_TAG_DIAG} handoff_bench=ON")
 endif()
 # Diagnostic (d77): per-method breakdown of the update phases (PERF sub_top=, self/inclusive time per
 # Class#method): every *update* method of the per-frame objects (Spriteset_Battle/Map, Sprite_Battler,
@@ -969,16 +843,16 @@ endif()
 # is not linked; checked at run time). vita-sem-nocancel.cpp. PERF sem_nc.
 option(MKXP_VITA_SEM_NOCANCEL "sem_wait / untimed sem_timedwait -> sem_wait_nocancel" OFF)
 if(MKXP_VITA_SEM_NOCANCEL)
-    target_sources(mkxp_vita_minimal PRIVATE src/vita-sem-nocancel.cpp)
-    target_link_options(mkxp_vita_minimal PRIVATE -Wl,--wrap=sem_wait,--wrap=sem_timedwait)
+    target_sources(lisa_vita PRIVATE src/vita-sem-nocancel.cpp)
+    target_link_options(lisa_vita PRIVATE -Wl,--wrap=sem_wait,--wrap=sem_timedwait)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} sem_nocancel=ON")
 endif()
 # Diagnostic (d79): time the main thread spends blocked in kernel calls (I/O, semaphores, mutexes,
 # delays, thread joins, GXM / vblank waits), per slow frame and per PERF window. vita-block-prof.cpp.
 option(MKXP_VITA_BLOCK_PROF "Main-thread blocking profiler (blk_* fields)" OFF)
 if(MKXP_VITA_BLOCK_PROF)
-    target_sources(mkxp_vita_minimal PRIVATE src/vita-block-prof.cpp)
-    target_link_options(mkxp_vita_minimal PRIVATE "-Wl,--wrap=sceKernelWaitSema,--wrap=sceKernelLockMutex,--wrap=sceKernelLockLwMutex,--wrap=sceKernelDelayThread,--wrap=sceKernelDelayThreadCB,--wrap=sceKernelWaitThreadEnd,--wrap=sceKernelWaitThreadEndCB,--wrap=sceIoOpen,--wrap=sceIoRead,--wrap=sceIoWrite,--wrap=sceIoClose,--wrap=sceIoLseek,--wrap=sceIoLseek32,--wrap=sceIoGetstat,--wrap=sceIoDopen,--wrap=sceIoDread,--wrap=sceIoRemove,--wrap=sceIoRename,--wrap=sceIoSyncByFd,--wrap=sceIoPread,--wrap=sceGxmFinish,--wrap=sceGxmDisplayQueueFinish,--wrap=sceGxmNotificationWait,--wrap=sceDisplayWaitVblankStart,--wrap=sceDisplayWaitVblankStartMulti")
+    target_sources(lisa_vita PRIVATE src/vita-block-prof.cpp)
+    target_link_options(lisa_vita PRIVATE "-Wl,--wrap=sceKernelWaitSema,--wrap=sceKernelLockMutex,--wrap=sceKernelLockLwMutex,--wrap=sceKernelDelayThread,--wrap=sceKernelDelayThreadCB,--wrap=sceKernelWaitThreadEnd,--wrap=sceKernelWaitThreadEndCB,--wrap=sceIoOpen,--wrap=sceIoRead,--wrap=sceIoWrite,--wrap=sceIoClose,--wrap=sceIoLseek,--wrap=sceIoLseek32,--wrap=sceIoGetstat,--wrap=sceIoDopen,--wrap=sceIoDread,--wrap=sceIoRemove,--wrap=sceIoRename,--wrap=sceIoSyncByFd,--wrap=sceIoPread,--wrap=sceGxmFinish,--wrap=sceGxmDisplayQueueFinish,--wrap=sceGxmNotificationWait,--wrap=sceDisplayWaitVblankStart,--wrap=sceDisplayWaitVblankStartMulti")
     set_property(SOURCE src/vita_freeze_probe.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_BLOCK_PROF)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} block_prof=ON")
 endif()
@@ -1002,8 +876,8 @@ endif()
 # known to be missing are not opened (each miss = a 13-43 ms stat on the card). vita-fs-index.cpp.
 option(MKXP_VITA_FS_INDEX "Asset folder index: skip missing extension candidates" OFF)
 if(MKXP_VITA_FS_INDEX)
-    target_sources(mkxp_vita_minimal PRIVATE src/vita-fs-index.cpp)
-    set_property(SOURCE src/bitmap-vita-minimal.cpp src/vita-audio-backend.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_FS_INDEX)
+    target_sources(lisa_vita PRIVATE src/vita-fs-index.cpp)
+    set_property(SOURCE src/bitmap-vita.cpp src/vita-audio-backend.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_FS_INDEX)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} fs_index=ON")
 endif()
 # Perf fix: battle animation images read ahead on a background thread at BattleManager.setup
@@ -1013,8 +887,8 @@ if(MKXP_VITA_ANIM_PREFETCH)
     if(NOT MKXP_VITA_IMG_DISK_CACHE)
         message(FATAL_ERROR "MKXP_VITA_ANIM_PREFETCH requires MKXP_VITA_IMG_DISK_CACHE (VitaImageCache::readWholeFile)")
     endif()
-    target_sources(mkxp_vita_minimal PRIVATE src/vita-prefetch.cpp src/vita-prefetch-binding.cpp)
-    set_property(SOURCE src/bitmap-vita-minimal.cpp src/vita-image-cache.cpp src/main.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_ANIM_PREFETCH)
+    target_sources(lisa_vita PRIVATE src/vita-prefetch.cpp src/vita-prefetch-binding.cpp)
+    set_property(SOURCE src/bitmap-vita.cpp src/vita-image-cache.cpp src/main.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_ANIM_PREFETCH)
     if(MKXP_VITA_FS_INDEX)
         set_property(SOURCE src/vita-prefetch-binding.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_FS_INDEX)
     endif()
@@ -1027,35 +901,11 @@ if(MKXP_VITA_INTERP_HYBRID)
     set_property(SOURCE src/main.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_INTERP_HYBRID)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} interp_hybrid=ON")
 endif()
-# Perf fix: the OFFSCREEN_SPRITES and SPRITE_FAST checks of Sprite_Character#update in C
-# (vita-sprite-fast-native.cpp; same calls, same order). Needs both of them.
-option(MKXP_VITA_SPRITE_FAST_NATIVE "Native OFFSCREEN/SPRITE_FAST sprite checks" OFF)
-if(MKXP_VITA_SPRITE_FAST_NATIVE)
-    if(NOT MKXP_VITA_SPRITE_FAST OR NOT MKXP_VITA_OFFSCREEN_SPRITES)
-        message(FATAL_ERROR "MKXP_VITA_SPRITE_FAST_NATIVE requires MKXP_VITA_SPRITE_FAST and MKXP_VITA_OFFSCREEN_SPRITES")
-    endif()
-    target_sources(mkxp_vita_minimal PRIVATE src/vita-sprite-fast-native.cpp)
-    set_property(SOURCE src/main.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_SPRITE_FAST_NATIVE)
-    set(VITA_TAG_DIAG "${VITA_TAG_DIAG} sprite_fast_native=ON")
-endif()
-# Perf fix: battle animation images (decoded-image cache entries) and their SEs decoded on a background
-# thread at BattleManager.setup (vita-predecode.cpp). PERF pd. Needs ANIM_PREFETCH and AUDIO.
-option(MKXP_VITA_ANIM_PREDECODE "Background decode of battle animation images and SEs" OFF)
-if(MKXP_VITA_ANIM_PREDECODE)
-    if(NOT MKXP_VITA_ANIM_PREFETCH OR NOT MKXP_VITA_AUDIO)
-        message(FATAL_ERROR "MKXP_VITA_ANIM_PREDECODE requires MKXP_VITA_ANIM_PREFETCH and MKXP_VITA_AUDIO")
-    endif()
-    target_sources(mkxp_vita_minimal PRIVATE src/vita-predecode.cpp)
-    set_property(SOURCE src/bitmap-vita-minimal.cpp src/vita-audio-backend.cpp src/vita-prefetch-binding.cpp
-        ${MKXP_DIR}/src/audio/soundemitter.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_ANIM_PREDECODE)
-    target_include_directories(mkxp_vita_minimal PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    set(VITA_TAG_DIAG "${VITA_TAG_DIAG} anim_predecode=ON")
-endif()
 # Diagnostic (d85): perf.log / slow_frames.log / vitagl.log written every N PERF windows instead of
 # every window (each write stalls 10-60 ms on the card). Empty = every window.
 set(MKXP_VITA_LOG_BATCH "" CACHE STRING "Write the diagnostic logs every N PERF windows")
 if(NOT MKXP_VITA_LOG_BATCH STREQUAL "")
-    set_property(SOURCE src/vita_diag.cpp src/shell/sharedstate_test.cpp
+    set_property(SOURCE src/vita_diag.cpp src/shell/sharedstate-vita.cpp
         APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_LOG_BATCH=${MKXP_VITA_LOG_BATCH})
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} log_batch=${MKXP_VITA_LOG_BATCH}")
 endif()
@@ -1066,11 +916,11 @@ if(NOT MKXP_VITA_SLOW_FRAME_MS STREQUAL "")
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} slow_frame_ms=${MKXP_VITA_SLOW_FRAME_MS}")
 endif()
 # Perf fix (d86): SPRITE_FAST also when only the map display moved (scrolling): Sprite#update +
-# update_position instead of the full update. Needs SPRITE_FAST (Ruby version, not SPRITE_FAST_NATIVE).
+# update_position instead of the full update. Needs SPRITE_FAST.
 option(MKXP_VITA_SPRITE_SCROLL "SPRITE_FAST scroll path (position only)" OFF)
 if(MKXP_VITA_SPRITE_SCROLL)
-    if(NOT MKXP_VITA_SPRITE_FAST OR MKXP_VITA_SPRITE_FAST_NATIVE)
-        message(FATAL_ERROR "MKXP_VITA_SPRITE_SCROLL requires MKXP_VITA_SPRITE_FAST without MKXP_VITA_SPRITE_FAST_NATIVE")
+    if(NOT MKXP_VITA_SPRITE_FAST)
+        message(FATAL_ERROR "MKXP_VITA_SPRITE_SCROLL requires MKXP_VITA_SPRITE_FAST")
     endif()
     set_property(SOURCE src/main.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_SPRITE_SCROLL)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} sprite_scroll=ON")
@@ -1109,7 +959,7 @@ endif()
 # Release monitoring (d89): map, battle, GC counts and Ruby heap on the PERF line (needs PERF_PROFILE).
 option(MKXP_VITA_PERF_LITE "Map/battle/GC fields on the PERF line" OFF)
 if(MKXP_VITA_PERF_LITE)
-    set_property(SOURCE src/main.cpp src/shell/sharedstate_test.cpp
+    set_property(SOURCE src/main.cpp src/shell/sharedstate-vita.cpp
         APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_PERF_LITE)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} perf_lite=ON")
 endif()
@@ -1122,21 +972,96 @@ if(MKXP_VITA_GALV_SHADOW_KEEP)
 endif()
 option(MKXP_VITA_HUE_PAGING "hue_change clones of clean bitmaps stay clean (file + hue): texture paging can give them back" OFF)
 if(MKXP_VITA_HUE_PAGING)
-    set_property(SOURCE src/bitmap-vita-minimal.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_HUE_PAGING)
+    set_property(SOURCE src/bitmap-vita.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_HUE_PAGING)
 endif()
 option(MKXP_VITA_CPU_PAGING "Give back CPU copies of clean bitmaps when the big pool runs low (and retry a failed decode)" OFF)
 if(MKXP_VITA_CPU_PAGING)
     if(MKXP_VITA_BIG_ALLOC_MB STREQUAL "" OR NOT MKXP_VITA_TEX_PAGING)
         message(FATAL_ERROR "MKXP_VITA_CPU_PAGING needs MKXP_VITA_BIG_ALLOC_MB and MKXP_VITA_TEX_PAGING")
     endif()
-    set_property(SOURCE src/main.cpp src/bitmap-vita-minimal.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_CPU_PAGING)
+    set_property(SOURCE src/main.cpp src/bitmap-vita.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_CPU_PAGING)
+endif()
+
+option(MKXP_VITA_TEX_DIRECT_CACHE "Image disk-cache hits decompressed straight into the texture (no CPU buffer)" OFF)
+if(MKXP_VITA_TEX_DIRECT_CACHE)
+    if(NOT MKXP_VITA_IMG_DISK_CACHE OR NOT MKXP_VITA_PNG_DIRECT OR NOT MKXP_VITA_BITMAP_NO_FBO)
+        message(FATAL_ERROR "MKXP_VITA_TEX_DIRECT_CACHE needs IMG_DISK_CACHE, PNG_DIRECT and BITMAP_NO_FBO")
+    endif()
+    set_property(SOURCE src/bitmap-vita.cpp src/vita-image-cache.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_TEX_DIRECT_CACHE)
+endif()
+option(MKXP_VITA_LOAD_OOM_RETRY "An existing image that fails to load: give memory back (paging, full GC) and retry once" OFF)
+if(MKXP_VITA_LOAD_OOM_RETRY)
+    if(NOT MKXP_VITA_TEX_PAGING OR NOT MKXP_VITA_BITMAP_LOAD_V2 OR NOT MKXP_VITA_PNG_DIRECT)
+        message(FATAL_ERROR "MKXP_VITA_LOAD_OOM_RETRY needs MKXP_VITA_TEX_PAGING, MKXP_VITA_BITMAP_LOAD_V2 and MKXP_VITA_PNG_DIRECT")
+    endif()
+    set_property(SOURCE src/bitmap-vita.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_LOAD_OOM_RETRY)
+endif()
+
+# Correctness fixes from the pre-alpha audit (PRE_ALPHA_AUDIT.md): binding guards on Bitmap#width /
+# #height / #draw_text, Bitmap.new size check, std::bad_alloc -> NoMemoryError in every guarded binding
+# (mkxp-z binding-util.h), 64-bit rect arithmetic in the CPU bitmap kernels. Whole target: the guard
+# macro is used by mkxp-z's bindings too.
+option(MKXP_VITA_AUDIT_FIXES "Correctness fixes of the pre-alpha audit" OFF)
+if(MKXP_VITA_AUDIT_FIXES)
+    target_compile_definitions(lisa_vita PRIVATE MKXP_VITA_AUDIT_FIXES)
+endif()
+
+# Public builds: no test key combos (L+R+SELECT 30/60 fps, L+R+START optimizations off, L+R+DOWN
+# texture-paging stress, L held at boot = Ruby GC defaults). L and R are game buttons in LISA.
+option(MKXP_VITA_NO_DEBUG_KEYS "Remove the test key combos (public builds)" OFF)
+if(MKXP_VITA_NO_DEBUG_KEYS)
+    target_compile_definitions(lisa_vita PRIVATE MKXP_VITA_NO_DEBUG_KEYS)
+endif()
+
+# Perf fix: disk-cache entries (format v3) in independent LZ4 chunks of ~256 KiB, each decompressed
+# into a small cached buffer and only written to the texture: vitaGL's memory is uncached, and LZ4 /
+# the in-place row move read it back (a 4.3 MiB hit: ~190 ms in d95). v2 entries are misses (rewritten
+# on the next decode). vita-image-cache.cpp only.
+option(MKXP_VITA_DCACHE_CHUNKS "Image disk cache: chunked entries, no reads from texture memory" OFF)
+if(MKXP_VITA_DCACHE_CHUNKS)
+    if(NOT MKXP_VITA_IMG_DISK_CACHE)
+        message(FATAL_ERROR "MKXP_VITA_DCACHE_CHUNKS requires MKXP_VITA_IMG_DISK_CACHE")
+    endif()
+    set_property(SOURCE src/vita-image-cache.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_DCACHE_CHUNKS)
+endif()
+
+# Fix: SoundEmitter's SE cache evicted the most recently used buffer first (a cache hit was moved
+# to the tail, where eviction starts; upstream bug). A hit now moves to the head. soundemitter.cpp only.
+option(MKXP_VITA_SE_LRU "SE cache: evict the least recently used buffer" OFF)
+if(MKXP_VITA_SE_LRU)
+    set_property(SOURCE ${MKXP_DIR}/src/audio/soundemitter.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_SE_LRU)
+endif()
+
+# Fix: Actors.rvdata2 / Scripts.rvdata2 read from <game root>/Data/ (the game's own layout; root copies
+# still accepted), and a message pointing to the installation guide when they are missing. main.cpp.
+option(MKXP_VITA_DATA_PATHS "Read the boot data files from Data/ like RGSS3" OFF)
+if(MKXP_VITA_DATA_PATHS)
+    set_property(SOURCE src/main.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_DATA_PATHS)
+endif()
+
+# Public builds: a loading screen (boot/loading.png if packaged, else "LISA: The Painful / Loading...")
+# instead of the boot messages; the messages go to qa.log, and on a boot failure they are shown
+# as before. main.cpp.
+option(MKXP_VITA_QUIET_BOOT "Loading screen instead of the boot messages" OFF)
+if(MKXP_VITA_QUIET_BOOT)
+    set_property(SOURCE src/main.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_QUIET_BOOT)
+endif()
+
+# Feature: analog sticks (src/vita-analog.h): left stick = D-pad, right stick = the combo keys
+# (Triangle/Square/Cross/Circle's R/X/Y/Z only, never confirm / cancel). Needs INPUT_V3. main.cpp.
+option(MKXP_VITA_ANALOG_INPUT "Left stick moves, right stick = combo keys" OFF)
+if(MKXP_VITA_ANALOG_INPUT)
+    if(NOT MKXP_VITA_INPUT_V3)
+        message(FATAL_ERROR "MKXP_VITA_ANALOG_INPUT requires MKXP_VITA_INPUT_V3")
+    endif()
+    set_property(SOURCE src/main.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_ANALOG_INPUT)
 endif()
 
 # Diagnostic only: per-caller accounting of the newlib heap (heap_callers.log, PERF hl_* fields).
 option(MKXP_VITA_HEAP_LEDGER "newlib heap per-caller ledger (wraps _malloc_r/_free_r/_realloc_r/_calloc_r/_memalign_r)" OFF)
 if(MKXP_VITA_HEAP_LEDGER)
-    target_sources(mkxp_vita_minimal PRIVATE src/vita-heap-ledger.cpp)
-    target_link_options(mkxp_vita_minimal PRIVATE -Wl,--wrap=_malloc_r -Wl,--wrap=_free_r -Wl,--wrap=_realloc_r
+    target_sources(lisa_vita PRIVATE src/vita-heap-ledger.cpp)
+    target_link_options(lisa_vita PRIVATE -Wl,--wrap=_malloc_r -Wl,--wrap=_free_r -Wl,--wrap=_realloc_r
                         -Wl,--wrap=_calloc_r -Wl,--wrap=_memalign_r)
     set_property(SOURCE src/main.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_HEAP_LEDGER)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} heap_ledger=ON")
@@ -1145,15 +1070,15 @@ endif()
 # SDL's Vita threads (mkxp-z audio streams/fades) never gave it back (vita-thread-reent.cpp).
 option(MKXP_VITA_THREAD_REENT_FIX "Release newlib reent slots in sceKernelDeleteThread" OFF)
 if(MKXP_VITA_THREAD_REENT_FIX)
-    target_sources(mkxp_vita_minimal PRIVATE src/vita-thread-reent.cpp)
-    target_link_options(mkxp_vita_minimal PRIVATE -Wl,--wrap=sceKernelDeleteThread)
+    target_sources(lisa_vita PRIVATE src/vita-thread-reent.cpp)
+    target_link_options(lisa_vita PRIVATE -Wl,--wrap=sceKernelDeleteThread)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} thread_reent_fix=ON")
 endif()
 # Fix: free pthread-embedded's per-thread ThreadParms block (never freed: one leak per Ruby Fiber).
 option(MKXP_VITA_PTHREAD_PARMS_FIX "Free pthread_create's ThreadParms in a pte_threadStart wrapper" OFF)
 if(MKXP_VITA_PTHREAD_PARMS_FIX)
-    target_sources(mkxp_vita_minimal PRIVATE src/vita-pthread-parms.cpp)
-    target_link_options(mkxp_vita_minimal PRIVATE -Wl,--wrap=pte_threadStart)
+    target_sources(lisa_vita PRIVATE src/vita-pthread-parms.cpp)
+    target_link_options(lisa_vita PRIVATE -Wl,--wrap=pte_threadStart)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} pthread_parms_fix=ON")
 endif()
 # Fix: a Sprite left on a disposed Viewport is not drawn instead of raising "disposed viewport"
@@ -1168,14 +1093,14 @@ endif()
 # Size in MiB; lower MKXP_VITA_HEAP_MB by the same amount to keep the total budget.
 set(MKXP_VITA_BIG_ALLOC_MB "" CACHE STRING "large C++ block pool in MiB (empty: off)")
 if(NOT MKXP_VITA_BIG_ALLOC_MB STREQUAL "")
-    target_sources(mkxp_vita_minimal PRIVATE src/vita-big-alloc.cpp)
+    target_sources(lisa_vita PRIVATE src/vita-big-alloc.cpp)
     set_property(SOURCE src/main.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_BIG_ALLOC MKXP_VITA_BIG_ALLOC_MB=${MKXP_VITA_BIG_ALLOC_MB})
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} big_alloc_mb=${MKXP_VITA_BIG_ALLOC_MB}")
     # Ruby's Fiber stacks (mmap -> vita-compat memalign) from the same pool.
     option(MKXP_VITA_BIG_ALLOC_MMAP "Anonymous mmap (Ruby fiber stacks) from the large-block pool" OFF)
     if(MKXP_VITA_BIG_ALLOC_MMAP)
         set_property(SOURCE src/vita-big-alloc.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_BIG_ALLOC_MMAP)
-        target_link_options(mkxp_vita_minimal PRIVATE -Wl,--wrap=mmap -Wl,--wrap=munmap)
+        target_link_options(lisa_vita PRIVATE -Wl,--wrap=mmap -Wl,--wrap=munmap)
         set(VITA_TAG_DIAG "${VITA_TAG_DIAG} big_alloc_mmap=ON")
     endif()
 endif()
@@ -1213,7 +1138,7 @@ endif()
 # RGSS3 Bitmap.new(filename) errors as mkxp-z: missing file -> Errno::ENOENT, non-PNG -> error.
 option(MKXP_VITA_BITMAP_LOAD_V2 "Bitmap load errors raise like mkxp-z (no placeholder)" OFF)
 if(MKXP_VITA_BITMAP_LOAD_V2)
-    set_property(SOURCE src/bitmap-vita-minimal.cpp src/bitmap-binding-vita.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_BITMAP_LOAD_V2)
+    set_property(SOURCE src/bitmap-vita.cpp src/bitmap-binding-vita.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_BITMAP_LOAD_V2)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} bitmap_load_v2=ON")
 endif()
 # RGSS3 Font: real Font.exist? and class defaults (main.cpp, bitmap-binding-vita.cpp).
@@ -1232,8 +1157,8 @@ foreach(vopt IN ITEMS INPUT_V2 INPUT_V3 SAVE_PATH SCENE_BREADCRUMB)
     endif()
 endforeach()
 if(MKXP_VITA_SCREEN_FX)
-    set_property(SOURCE src/main.cpp src/bitmap-vita-minimal.cpp src/bitmap-binding-vita.cpp
-                        src/shell/sharedstate_test.cpp
+    set_property(SOURCE src/main.cpp src/bitmap-vita.cpp src/bitmap-binding-vita.cpp
+                        src/shell/sharedstate-vita.cpp
         APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_SCREEN_FX)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} screen_fx=ON")
 endif()
@@ -1244,7 +1169,7 @@ if(MKXP_VITA_GFX_V2)
     if(NOT MKXP_VITA_SCREEN_FX)
         message(FATAL_ERROR "MKXP_VITA_GFX_V2 requires MKXP_VITA_SCREEN_FX")
     endif()
-    set_property(SOURCE src/main.cpp src/bitmap-binding-vita.cpp src/shell/sharedstate_test.cpp
+    set_property(SOURCE src/main.cpp src/bitmap-binding-vita.cpp src/shell/sharedstate-vita.cpp
         APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_GFX_V2)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} gfx_v2=ON")
 endif()
@@ -1254,25 +1179,25 @@ if(MKXP_VITA_VIEWPORT_GRAY)
     if(NOT MKXP_VITA_SCREEN_FX OR NOT MKXP_VITA_VIEWPORT_FX)
         message(FATAL_ERROR "MKXP_VITA_VIEWPORT_GRAY requires MKXP_VITA_SCREEN_FX and MKXP_VITA_VIEWPORT_FX")
     endif()
-    set_property(SOURCE src/shell/sharedstate_test.cpp
+    set_property(SOURCE src/shell/sharedstate-vita.cpp
         APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_VIEWPORT_GRAY)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} viewport_gray=ON")
 endif()
 if(MKXP_VITA_VIEWPORT_FX)
-    set_property(SOURCE src/shell/sharedstate_test.cpp
+    set_property(SOURCE src/shell/sharedstate-vita.cpp
         APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_VIEWPORT_FX)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} viewport_fx=ON")
 endif()
 if(MKXP_VITA_BITMAP_DEFERRED_UPLOAD)
-    set_property(SOURCE src/bitmap-vita-minimal.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_BITMAP_DEFERRED_UPLOAD)
+    set_property(SOURCE src/bitmap-vita.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_BITMAP_DEFERRED_UPLOAD)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} deferred_upload=ON")
 endif()
 
 # Fix: Bitmap textures without FBOs (vitaGL has only 256; exhausted after the first battle, then
-# the new tile atlas had no FBO). Affects bitmap-vita-minimal.cpp only.
+# the new tile atlas had no FBO). Affects bitmap-vita.cpp only.
 option(MKXP_VITA_BITMAP_NO_FBO "Create Bitmap textures without framebuffer objects" OFF)
 if(MKXP_VITA_BITMAP_NO_FBO)
-    set_property(SOURCE src/bitmap-vita-minimal.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_BITMAP_NO_FBO)
+    set_property(SOURCE src/bitmap-vita.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_BITMAP_NO_FBO)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} bitmap_no_fbo=ON")
 endif()
 
@@ -1291,7 +1216,7 @@ if(MKXP_VITA_CHDIR_GAME_ROOT)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} chdir_game_root=ON")
 endif()
 
-# Fix: $stdout/$stderr -> ux0:data/ruby_vita_test/stdout.log (STDOUT writes raise EBADF on the Vita).
+# Fix: $stdout/$stderr -> <game root>/stdout.log (STDOUT writes raise EBADF on the Vita).
 option(MKXP_VITA_STDOUT_TO_FILE "Redirect Ruby $stdout/$stderr to stdout.log" OFF)
 if(MKXP_VITA_STDOUT_TO_FILE)
     set_property(SOURCE src/main.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_STDOUT_TO_FILE)
@@ -1303,18 +1228,15 @@ endif()
 # layout, so the definition is target-wide.
 option(MKXP_VITA_NO_SCALING_SHADERS "Leave the Bicubic/Lanczos3 shaders out of ShaderSet" OFF)
 if(MKXP_VITA_NO_SCALING_SHADERS)
-    target_compile_definitions(mkxp_vita_minimal PRIVATE MKXP_VITA_NO_SCALING_SHADERS)
+    target_compile_definitions(lisa_vita PRIVATE MKXP_VITA_NO_SCALING_SHADERS)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} no_scaling_shaders=ON")
 endif()
 
 # Diagnostic only: freeze probe. RAM ring buffer of main-thread/Ruby/coroutine markers and a
-# watchdog thread that writes ux0:data/ruby_vita_test/freeze.log when frames stop for ~2 s.
+# watchdog thread that writes <game root>/freeze.log when frames stop for ~2 s.
 # Coroutine markers come from --wrap around libruby's Context.o entry points (libruby unchanged).
 option(MKXP_VITA_FREEZE_PROBE "Freeze probe: RAM markers + watchdog freeze.log" OFF)
 if(MKXP_VITA_FREEZE_PROBE)
-    if(MKXP_VITA_COROUTINE_PROBE)
-        message(FATAL_ERROR "MKXP_VITA_FREEZE_PROBE and MKXP_VITA_COROUTINE_PROBE both wrap coroutine_transfer")
-    endif()
     if(MKXP_RUBY_STATIC_LIB MATCHES "-O2")
         set(VITA_TAG_RUBY "O2")
     elseif(MKXP_RUBY_STATIC_LIB MATCHES "-O3")
@@ -1348,12 +1270,12 @@ if(NOT VITA_TAG_DIAG STREQUAL "")
 endif()
     file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/vita_build_tag.h" CONTENT
 "#define MKXP_VITA_BUILD_TAG \"ruby=${VITA_TAG_RUBY} mkxp=${VITA_TAG_MKXP} window_debug=${VITA_TAG_WINDOW} preblit_us=${VITA_TAG_PREBLIT} freeze_probe=ON${VITA_TAG_BMPWIN}${VITA_TAG_ASPECT}${VITA_TAG_PRESENT}${VITA_TAG_DEBUG_BOOT}${VITA_TAG_DIAG}\"\n")
-    target_sources(mkxp_vita_minimal PRIVATE src/vita_freeze_probe.cpp)
-    target_include_directories(mkxp_vita_minimal PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+    target_sources(lisa_vita PRIVATE src/vita_freeze_probe.cpp)
+    target_include_directories(lisa_vita PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
     set_property(SOURCE src/vita_freeze_probe.cpp src/main.cpp
-                        src/shell/sharedstate_test.cpp
+                        src/shell/sharedstate-vita.cpp
         APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_FREEZE_PROBE)
-    target_link_options(mkxp_vita_minimal PRIVATE
+    target_link_options(lisa_vita PRIVATE
         -Wl,--wrap=coroutine_transfer
         -Wl,--wrap=coroutine_transfer_exit
         -Wl,--wrap=coroutine_initialize
@@ -1361,40 +1283,8 @@ endif()
     )
 endif()
 
-# Diagnostic only: inert padding after libruby / libpthread to reproduce the pthread build layout.
-option(MKXP_VITA_LAYOUT_PAD_TEST "Insert inert layout padding after libruby and libpthread" OFF)
-set(MKXP_VITA_PAD_A_TEXT 0 CACHE STRING "Padding .text bytes after libruby")
-set(MKXP_VITA_PAD_A_RODATA 0 CACHE STRING "Padding .rodata bytes after libruby")
-set(MKXP_VITA_PAD_B_TEXT 0 CACHE STRING "Padding .text bytes after libpthread")
-if(MKXP_VITA_LAYOUT_PAD_TEST)
-    add_library(vita_layout_pad_a STATIC src/vita-layout-pad.c)
-    target_compile_definitions(vita_layout_pad_a PRIVATE VITA_PAD_NAME=a
-        VITA_PAD_TEXT_SIZE=${MKXP_VITA_PAD_A_TEXT} VITA_PAD_RODATA_SIZE=${MKXP_VITA_PAD_A_RODATA})
-    add_library(vita_layout_pad_b STATIC src/vita-layout-pad.c)
-    target_compile_definitions(vita_layout_pad_b PRIVATE VITA_PAD_NAME=b
-        VITA_PAD_TEXT_SIZE=${MKXP_VITA_PAD_B_TEXT} VITA_PAD_RODATA_SIZE=0)
-    target_link_options(mkxp_vita_minimal PRIVATE
-        -Wl,--undefined=vita_layout_pad_text_a
-        -Wl,--undefined=vita_layout_pad_rodata_a
-        -Wl,--undefined=vita_layout_pad_text_b)
-    set(VITA_PAD_A vita_layout_pad_a)
-    set(VITA_PAD_B vita_layout_pad_b)
-endif()
-
-# Diagnostic only: inert 0x98-byte .text blob after libpthread, mimicking pthread_cancel.o's
-# layout footprint without defining pthread_cancel.
-option(MKXP_VITA_FAKE_CANCEL_TEST "Link an inert stand-in for pthread_cancel.o" OFF)
-if(MKXP_VITA_FAKE_CANCEL_TEST)
-    add_library(vita_fake_cancel STATIC src/vita-layout-pad.c)
-    target_compile_definitions(vita_fake_cancel PRIVATE VITA_PAD_NAME=fakecancel
-        VITA_PAD_TEXT_SIZE=152 VITA_PAD_RODATA_SIZE=0)
-    target_link_options(mkxp_vita_minimal PRIVATE -Wl,--undefined=vita_layout_pad_text_fakecancel)
-    set(VITA_FAKE_CANCEL vita_fake_cancel)
-endif()
-
-target_link_libraries(mkxp_vita_minimal
+target_link_libraries(lisa_vita
     ${MKXP_RUBY_STATIC_LIB}
-    ${VITA_PAD_A}
 
     SDL2_ttf
     ${VITA_AUDIO_LIBS}
@@ -1407,8 +1297,6 @@ target_link_libraries(mkxp_vita_minimal
     z
     bz2
     pthread
-    ${VITA_PAD_B}
-    ${VITA_FAKE_CANCEL}
     m
 
     ${VITA_COMPAT_DIR}/libvitacompat.a
@@ -1436,19 +1324,23 @@ target_link_libraries(mkxp_vita_minimal
 
 
 vita_create_self(
-    mkxp_vita_minimal.self
-    mkxp_vita_minimal
+    lisa_vita.self
+    lisa_vita
 )
 
 # Package contents besides the executable: LiveArea (icon, background, startup image: 8-bit
-# palette PNGs, see tools/livearea/; not in the repository, each one is packaged if present) and,
-# with MKXP_VITA_PATCHES, the game patches.
+# palette PNGs, see tools/livearea/; each one is packaged if present) and, with MKXP_VITA_PATCHES,
+# the game patches.
 set(VITA_LIVEAREA_FILES)
 foreach(img icon0.png livearea/contents/bg.png livearea/contents/startup.png)
     if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/sce_sys/${img})
         list(APPEND VITA_LIVEAREA_FILES FILE ${CMAKE_CURRENT_SOURCE_DIR}/sce_sys/${img} sce_sys/${img})
     endif()
 endforeach()
+# Loading screen (MKXP_VITA_QUIET_BOOT): 960x544 PNG, packaged if present.
+if(MKXP_VITA_QUIET_BOOT AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/boot/loading.png)
+    list(APPEND VITA_LIVEAREA_FILES FILE ${CMAKE_CURRENT_SOURCE_DIR}/boot/loading.png boot/loading.png)
+endif()
 set(VITA_VPK_FILES
     ${VITA_LIVEAREA_FILES}
     FILE ${CMAKE_CURRENT_SOURCE_DIR}/sce_sys/livearea/contents/template.xml sce_sys/livearea/contents/template.xml)
@@ -1460,9 +1352,9 @@ if(MKXP_VITA_PATCHES)
 endif()
 
 vita_create_vpk(
-    mkxp_vita_minimal.vpk
+    lisa_vita.vpk
     ${VITA_TITLEID}
-    mkxp_vita_minimal.self
+    lisa_vita.self
     VERSION ${VITA_VERSION}
     NAME ${VITA_APP_NAME}
     ${VITA_VPK_FILES}

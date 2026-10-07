@@ -10,13 +10,15 @@
 - Some heavy maps (many events and shadows on screen) can drop below 60 fps.
 - Tested only with the PSVshell overclock at 500/222/222/166 MHz; at stock clocks performance is lower.
 - Occasional short pauses from Ruby's garbage collector.
+- First launch: a pause of about 10 s while the shaders are compiled, and short stutters the first
+  time large images are shown (see [Installation](INSTALLATION.md#first-launch)).
 
 ### Compatibility
 - **MP3 and MIDI are not supported** (only Ogg Vorbis and WAV): those sounds stay silent.
 - Encrypted archives (`.rgss3a`) are not supported: the game files must be extracted.
 - Only the 544x416 resolution.
 - Tested only with **LISA: The Painful**: other RPG Maker VX Ace games may not work.
-  Some details are still LISA-specific (bitmap font, fixed path `ux0:data/ruby_vita_test/`).
+  Some details are still LISA-specific (bitmap font, fixed folder `ux0:data/lisa_vita/`).
 - `Object#clone` behaves like `dup` (it does not keep the frozen state or singleton methods).
 
 ### Build / distribution

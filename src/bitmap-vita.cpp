@@ -3,9 +3,6 @@
 #ifdef MKXP_VITA_FS_INDEX
 #include "vita-fs-index.h"
 #endif
-#ifdef MKXP_VITA_ANIM_PREDECODE
-#include "vita-predecode.h"
-#endif
 #include "bitmap.h"
 #include "sharedstate.h"
 #include "texpool.h"
@@ -31,6 +28,16 @@
 #include <new>
 #if (defined(MKXP_VITA_HUE_PAGING) || defined(MKXP_VITA_CPU_PAGING)) && !defined(MKXP_VITA_TEX_PAGING)
 #error "MKXP_VITA_HUE_PAGING / MKXP_VITA_CPU_PAGING need MKXP_VITA_TEX_PAGING"
+#endif
+#ifdef MKXP_VITA_LOAD_OOM_RETRY
+#if !defined(MKXP_VITA_TEX_PAGING) || !defined(MKXP_VITA_BITMAP_LOAD_V2) || !defined(MKXP_VITA_PNG_DIRECT)
+#error "MKXP_VITA_LOAD_OOM_RETRY needs MKXP_VITA_TEX_PAGING, MKXP_VITA_BITMAP_LOAD_V2 and MKXP_VITA_PNG_DIRECT"
+#endif
+#include <sys/stat.h>
+extern "C" void rb_gc_start(void);   /* Ruby: full GC (the Bitmap is built inside a Ruby call) */
+#endif
+#if defined(MKXP_VITA_TEX_DIRECT_CACHE) && (!defined(MKXP_VITA_IMG_DISK_CACHE) || !defined(MKXP_VITA_PNG_DIRECT) || !defined(MKXP_VITA_BITMAP_NO_FBO))
+#error "MKXP_VITA_TEX_DIRECT_CACHE needs MKXP_VITA_IMG_DISK_CACHE, MKXP_VITA_PNG_DIRECT and MKXP_VITA_BITMAP_NO_FBO"
 #endif
 static void vitaImgCacheInit()
 {
@@ -205,16 +212,33 @@ Bitmap::Bitmap(int width, int height, bool isHires)
 {
     (void)isHires;
 
+#ifdef MKXP_VITA_AUDIT_FIXES
+    /* Fix (MKXP_VITA_AUDIT_FIXES): a negative size made width * height * 4 (int) negative, and a huge
+     * one overflowed it (size_t is 32 bits here too): std::length_error / bad_alloc through the
+     * binding's guard, which only catches mkxp Exceptions: abort. Now the RGSSError upstream raises.
+     * A 0 size is still accepted (empty bitmap) as this backend always did: RGSS3/upstream raise for
+     * it too, but text widths measured by this port's font renderer feed some sizes (ATS
+     * resize_contents), so turning 0 into an error could stop the game where it works today. */
+    if (width < 0 || height < 0 || (uint64_t)width * (uint64_t)height * 4 > (uint64_t)0x7fffffff)
+        throw Exception(Exception::RGSSError, "failed to create bitmap");
+#endif
     p = new BitmapPrivate();
 
     p->gl = VITA_BITMAP_TEX_REQUEST(
         width,
         height
     );
+#ifdef MKXP_VITA_AUDIT_FIXES
+p->pixels.resize(
+    (size_t)width * height * 4,
+    0
+);
+#else
 p->pixels.resize(
     width * height * 4,
     0
 );
+#endif
 
 p->hasCpuPixels = true;
 
@@ -315,6 +339,20 @@ extern "C" size_t vitaDiagPngCacheBytes()
 }
 
 #endif
+#ifdef MKXP_VITA_LOAD_OOM_RETRY
+/* MKXP_VITA_LOAD_OOM_RETRY: vitaGL could not allocate the texture's memory (glTexImage2D out of
+ * memory leaves it without data): a failed load, not an empty image. The texture is bound. */
+static bool vitaUploadOk(TEXFBO &t)
+{
+    if (vglGetTexDataPointer(GL_TEXTURE_2D))
+        return true;
+    TEX::del(t.tex);
+    t = TEXFBO();
+    FBO::unbind();
+    return false;
+}
+#endif
+
 static bool vitaLoadPngToBitmap(
     const std::string &path,
     TEXFBO &out
@@ -327,6 +365,10 @@ static bool vitaLoadPngToBitmap(
             out = VITA_BITMAP_TEX_REQUEST(cw, ch);
             TEX::bind(out.tex);
             TEX::uploadImage(cw, ch, cpx->data(), GL_RGBA);
+#ifdef MKXP_VITA_LOAD_OOM_RETRY
+            if (!vitaUploadOk(out))
+                return false;
+#endif
             FBO::unbind();
             return true;
         }
@@ -344,7 +386,34 @@ static bool vitaLoadPngToBitmap(
         }
     }
 #endif
-#ifdef MKXP_VITA_IMG_DISK_CACHE
+#if defined(MKXP_VITA_IMG_DISK_CACHE) && defined(MKXP_VITA_TEX_DIRECT_CACHE)
+    vitaImgCacheInit();
+    {
+        /* Cache hit decompressed straight into the new texture (vita-image-cache.cpp loadInto): no
+         * CPU buffer of the decoded size. */
+#ifdef MKXP_VITA_DIAG
+        const uint64_t vitaDcT0 = vitaDiagNow();
+#endif
+        struct Dst { TEXFBO t; bool made = false; } d;
+        auto dstFn = [](void *ctx, int w, int h, size_t *stride) -> unsigned char * {
+            Dst &dd = *static_cast<Dst *>(ctx);
+            dd.t = VITA_BITMAP_TEX_REQUEST(w, h);   /* leaves the texture bound */
+            dd.made = true;
+            *stride = (size_t)((w + 7) & ~7) * 4;   /* vitaGL rows: VGL_ALIGN(w, 8) * 4, as PNG_DIRECT */
+            return static_cast<unsigned char *>(vglGetTexDataPointer(GL_TEXTURE_2D));
+        };
+        if (VitaImageCache::loadInto(path, dstFn, &d)) {
+#ifdef MKXP_VITA_DIAG
+            vitaDiagSpan(VD_PNG_DECODE, vitaDcT0, (uint64_t)d.t.width * d.t.height * 4, "disk_cache_direct");
+#endif
+            out = d.t;
+            FBO::unbind();
+            return true;
+        }
+        if (d.made)
+            TEX::del(d.t.tex);
+    }
+#elif defined(MKXP_VITA_IMG_DISK_CACHE)
     vitaImgCacheInit();
     {
 #ifdef MKXP_VITA_DIAG
@@ -352,15 +421,7 @@ static bool vitaLoadPngToBitmap(
 #endif
         int dw = 0, dh = 0;
         std::vector<unsigned char> dpx;
-#ifdef MKXP_VITA_ANIM_PREDECODE
-        /* Decoded ahead by vita-predecode.cpp (VitaImageCache::loadQuiet: the same pixels). */
-        const bool vitaPre = vitaPredecodeTakeImage(path, dw, dh, dpx);
-        if (vitaPre)
-            VitaImageCache::countHit();
-        if (vitaPre || VitaImageCache::load(path, dw, dh, dpx)) {
-#else
         if (VitaImageCache::load(path, dw, dh, dpx)) {
-#endif
 #ifdef MKXP_VITA_DIAG
             vitaDiagSpan(VD_PNG_DECODE, vitaDcT0, (uint64_t)dw * dh * 4, "disk_cache");
 #endif
@@ -424,6 +485,10 @@ static bool vitaLoadPngToBitmap(
             out = VITA_BITMAP_TEX_REQUEST(w, h);
             TEX::bind(out.tex);
             TEX::uploadImage(w, h, px.data(), GL_RGBA);
+#ifdef MKXP_VITA_LOAD_OOM_RETRY
+            if (!vitaUploadOk(out))
+                return false;
+#endif
             FBO::unbind();
             return true;
         }
@@ -536,8 +601,8 @@ static bool vitaLoadPngToBitmap(
  * candidate) to exercise eviction and restore everywhere; qa.log TEX_PAGING_STRESS ON/OFF.
  */
 #ifdef MKXP_VITA_HUE_PAGING
-#ifndef MKXP_VITA_MINIMAL_TEST
-#error "MKXP_VITA_HUE_PAGING needs MKXP_VITA_MINIMAL_TEST"
+#ifndef MKXP_VITA_PORT
+#error "MKXP_VITA_HUE_PAGING needs MKXP_VITA_PORT"
 #endif
 static bool vitaDecodeSource(const BitmapPrivate *p, int &w, int &h, std::vector<unsigned char> &px);
 #endif
@@ -572,6 +637,10 @@ bool vitaPgRestore(BitmapPrivate *p)
         t = vitaBitmapTexRequest(w, h);
         TEX::uploadImage(w, h, p->pixels.data(), GL_RGBA);
         ok = t.tex != TEX::ID(0);
+#ifdef MKXP_VITA_LOAD_OOM_RETRY
+        if (ok && !vitaUploadOk(t))   /* no texture memory: a failed restore (backoff), not an empty one */
+            ok = false;
+#endif
 #ifdef MKXP_VITA_HUE_PAGING
     } else if (p->cleanHue) {   /* hue clone: the file again, then the same hue_change */
         std::vector<unsigned char> px;
@@ -585,6 +654,10 @@ bool vitaPgRestore(BitmapPrivate *p)
             t = vitaBitmapTexRequest(w, h);
             TEX::uploadImage(w, h, px.data(), GL_RGBA);
             ok = t.tex != TEX::ID(0);
+#ifdef MKXP_VITA_LOAD_OOM_RETRY
+            if (ok && !vitaUploadOk(t))
+                ok = false;
+#endif
         }
 #endif
     } else {
@@ -695,6 +768,24 @@ void vitaCpuMakeRoom(size_t bytes)
         vitaCpuRelease(freeB, bytes + kCpuRoom, 1);
 }
 #endif
+#ifdef MKXP_VITA_LOAD_OOM_RETRY
+/* Every texture paging could give back that was not used in this frame (MKXP_VITA_LOAD_OOM_RETRY). */
+unsigned vitaPgEvictIdle()
+{
+    unsigned n = 0;
+    for (BitmapPrivate *b = BitmapPrivate::pgHead; b; b = b->pgNext) {
+        if (!b->fileClean || b->evicted || b->gl.tex == TEX::ID(0) || b->lastUse == gPgFrame || vitaPgBytes(b) < kPgMinBytes)
+            continue;
+#ifdef MKXP_VITA_BITMAP_DEFERRED_UPLOAD
+        if (b->uploadPending)
+            continue;
+#endif
+        vitaPgEvict(b);
+        ++n;
+    }
+    return n;
+}
+#endif
 } // namespace
 
 /* main.cpp, once per Graphics.update before the frame is drawn (main thread). */
@@ -702,9 +793,13 @@ extern "C" void vitaTexPagingTick()
 {
     ++gPgFrame;
     {
+#ifdef MKXP_VITA_NO_DEBUG_KEYS
+        const bool on = false;   /* public build: no stress-test key (MKXP_VITA_NO_DEBUG_KEYS) */
+#else
         SceCtrlData pad;
         const unsigned kCombo = SCE_CTRL_LTRIGGER | SCE_CTRL_RTRIGGER | SCE_CTRL_DOWN;
         const bool on = sceCtrlPeekBufferPositive(0, &pad, 1) > 0 && (pad.buttons & kCombo) == kCombo;
+#endif
         if (on && !gPgStressPrev) {
             gPgStress = !gPgStress;
             FILE *f = std::fopen(VITA_GAME_ROOT "qa.log", "a");
@@ -785,19 +880,6 @@ extern "C" void vitaTexPagingStats(unsigned *evicted, unsigned *restored, unsign
 #define VITA_PG_DIRTY(p) ((void)0)
 #endif
 
-#ifdef MKXP_VITA_DEBUG_TILESET
-#include <cstdio>
-/* Diagnostic only: Bitmap(filename) loads / missing-file fallbacks / releases -> tileset.log. */
-static void vitaTsBitmapLog(const char *what, const Bitmap *b, const BitmapPrivate *p, const char *path)
-{
-    FILE *f = std::fopen(VITA_GAME_ROOT "tileset.log", "a");
-    if (!f)
-        return;
-    std::fprintf(f, "%s bmp=%p tex=%u fbo=%u size=%dx%d path=%s\n", what, (const void *)b,
-                 (unsigned)p->gl.tex.gl, (unsigned)p->gl.fbo.gl, p->gl.width, p->gl.height, path);
-    std::fclose(f);
-}
-#endif
 
 Bitmap::Bitmap(const char *filename)
 {
@@ -813,7 +895,7 @@ Bitmap::Bitmap(const char *filename)
      *
      * mentre noi abbiamo copiato le risorse sotto:
      *
-     * ux0:data/ruby_vita_test/
+     * <game root>/
      */
     std::string vitaPath =
         VITA_GAME_ROOT +
@@ -867,6 +949,57 @@ Bitmap::Bitmap(const char *filename)
         p->fileClean = loaded;
 #endif
     }
+
+#ifdef MKXP_VITA_LOAD_OOM_RETRY
+    /*
+     * Fix (MKXP_VITA_LOAD_OOM_RETRY): d92, after ~48 min: RuntimeError "Graphics/Animations/Fire3" in
+     * Cache.animation during a battle. The file exists; its load failed for lack of memory (the CPU
+     * heaps were fragmented and full), and every load failure was reported as a missing file.
+     * Ruby does the same for its own allocations (GC, then once more): an image that exists but did
+     * not load gets one more try after the memory that can be given back is (clean CPU copies and
+     * textures not used in this frame, garbage objects - Bitmaps no longer referenced - through a
+     * full GC). A second failure raises an error that says so instead of a missing-file error.
+     * qa.log LOAD_RETRY path=... ok=0/1 (first 32).
+     */
+    if (!loaded) {
+        struct stat st;
+        std::string existing;
+        if (::stat(vitaPath.c_str(), &st) == 0 && S_ISREG(st.st_mode))
+            existing = vitaPath;
+        else if (::stat((vitaPath + ".png").c_str(), &st) == 0 && S_ISREG(st.st_mode))
+            existing = vitaPath + ".png";
+        if (!existing.empty()) {
+            unsigned cpu = 0, tex = 0;
+#ifdef MKXP_VITA_CPU_PAGING
+            cpu = gCpuDropped;
+            vitaCpuRelease(0, (size_t)-1, 1);
+            cpu = gCpuDropped - cpu;
+#endif
+            tex = vitaPgEvictIdle();
+            rb_gc_start();
+            loaded = vitaLoadPngToBitmap(existing, p->gl);
+            if (loaded) {
+                p->sourcePath = existing;
+                p->fileClean = true;
+            }
+            static int logged = 0;
+            if (logged < 32) {
+                ++logged;
+                FILE *f = std::fopen(VITA_GAME_ROOT "qa.log", "a");
+                if (f) {
+                    std::fprintf(f, "LOAD_RETRY path=%s ok=%d cpu_dropped=%u tex_evicted=%u\n", relativePath.c_str(),
+                                 loaded ? 1 : 0, cpu, tex);
+                    std::fclose(f);
+                }
+            }
+            if (!loaded) {
+                delete p;
+                p = nullptr;
+                throw Exception(Exception::MKXPError, "%s: not enough memory to load the image", relativePath.c_str());
+            }
+        }
+    }
+#endif
 
 #ifdef MKXP_VITA_BITMAP_LOAD_V2
     /*
@@ -940,9 +1073,6 @@ Bitmap::Bitmap(const char *filename)
         FBO::unbind();
 #endif
     }
-#ifdef MKXP_VITA_DEBUG_TILESET
-    vitaTsBitmapLog(loaded ? "TS_BITMAP_LOAD" : "TS_BITMAP_MISSING_FALLBACK", this, p, vitaPath.c_str());
-#endif
 }
 
 Bitmap::~Bitmap()
@@ -1019,7 +1149,7 @@ TEXFBO &Bitmap::getGLTypes() const
     return p->gl;
 }
 
-#ifdef MKXP_VITA_MINIMAL_TEST
+#ifdef MKXP_VITA_PORT
 
 static bool vitaLoadPngPixels(
     const char *path,
@@ -1516,6 +1646,10 @@ static inline void vitaFlushUpload(BitmapPrivate *p)
 {
     if (p && p->uploadPending) {
         VITA_PG_ENSURE(p);
+#ifdef MKXP_VITA_LOAD_OOM_RETRY
+        if (p->evicted)
+            return;   /* the rebuild found no texture memory: the upload waits for the next try */
+#endif
         p->uploadPending = false;
         /* Called while the scene is being drawn: keep the bound framebuffer (no FBO::unbind, which
          * sent the rest of the frame to FB0: text appeared only once it stopped changing) and the
@@ -1981,73 +2115,9 @@ void Bitmap::radialBlur(int angle, int divisions)
 
 #endif
 
-#ifdef MKXP_VITA_DEBUG_TILESET
-#include <vitaGL.h>
-#include <cstdio>
-/*
- * Diagnostic only (MKXP_VITA_DEBUG_TILESET): one-line description of the bitmap. With verifyTex,
- * compares the texture memory (what the atlas blit samples) with the CPU copy or a fresh decode of
- * the source file and reports the differing pixels. Uses glFinish once per call.
- */
-void Bitmap::vitaDiagDescribe(char *buf, int cap, bool verifyTex) const
-{
-    if (isDisposed() || !p) {
-        std::snprintf(buf, cap, "bmp=%p DISPOSED", (const void *)this);
-        return;
-    }
-#ifdef MKXP_VITA_BITMAP_DEFERRED_UPLOAD
-    vitaFlushUpload(p);
-#endif
-    int len = std::snprintf(buf, cap, "bmp=%p tex=%u fbo=%u size=%dx%d cpu=%d src=%s", (const void *)this,
-                            (unsigned)p->gl.tex.gl, (unsigned)p->gl.fbo.gl, p->gl.width, p->gl.height,
-                            p->hasCpuPixels ? 1 : 0, p->sourcePath.empty() ? "-" : p->sourcePath.c_str());
-    if (!verifyTex || len <= 0 || len >= cap)
-        return;
-
-    std::vector<unsigned char> ref;
-    const unsigned char *refPx = nullptr;
-    int rw = p->gl.width, rh = p->gl.height;
-    if (p->hasCpuPixels) {
-        refPx = p->pixels.data();
-    } else if (!p->sourcePath.empty() && VITA_DECODE_SOURCE(p, rw, rh, ref)) {
-        refPx = ref.data();
-    }
-    if (!refPx || rw != p->gl.width || rh != p->gl.height) {
-        std::snprintf(buf + len, cap - len, " texcheck=no_reference");
-        return;
-    }
-
-    GLint prevTex = 0;
-    glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTex);
-    glFinish();
-    VITA_PG_ENSURE(p);
-    TEX::bind(p->gl.tex);
-    const unsigned char *mem = (const unsigned char *)vglGetTexDataPointer(GL_TEXTURE_2D);
-    long diff = 0;
-    uint32_t hash = 2166136261u;
-    if (mem) {
-        const int stride = ((rw + 7) & ~7) * 4;
-        for (int y = 0; y < rh; ++y) {
-            const unsigned char *a = mem + (size_t)y * stride, *b = refPx + (size_t)y * rw * 4;
-            for (int x = 0; x < rw * 4; x += 4) {
-                if (std::memcmp(a + x, b + x, 4) != 0)
-                    ++diff;
-                for (int c = 0; c < 4; ++c) { hash ^= a[x + c]; hash *= 16777619u; }
-            }
-        }
-    }
-    glBindTexture(GL_TEXTURE_2D, (GLuint)prevTex);
-    std::snprintf(buf + len, cap - len, " texmem=%p texmem_fnv=0x%08x texmem_vs_%s_diff_px=%ld",
-                  (const void *)mem, (unsigned)hash, p->hasCpuPixels ? "cpu" : "png", mem ? diff : -1L);
-}
-#endif
 
 void Bitmap::releaseResources()
 {
-#ifdef MKXP_VITA_DEBUG_TILESET
-    if (!p->sourcePath.empty())
-        vitaTsBitmapLog("TS_BITMAP_RELEASE", this, p, p->sourcePath.c_str());
-#endif
 #ifdef MKXP_VITA_TEX_PAGING
     if (p->evicted)
         gPgOutBytes -= vitaPgBytes(p);

@@ -10,14 +10,17 @@ cmake -S . -B build -C options/release.cmake
 make -C build -j"$(nproc)"
 ```
 
-The package is `build/mkxp_vita_minimal.vpk`.
+The package is `build/lisa_vita.vpk` (published as `LISA-Vita-alpha1.vpk`).
+
+`deps/setup.sh` leaves an existing `deps/mkxp-z` or `deps/vitaGL` as it is: after pulling a new
+version of this repository, delete them (and `build/`) so the updated patches are applied.
 
 ## What `deps/setup.sh` does
 
 | Dependency | Base | Port changes |
 |---|---|---|
 | mkxp-z | `826929e` ([mkxp-z/mkxp-z](https://github.com/mkxp-z/mkxp-z)) | `deps/patches/mkxp-z.patch`; the shader headers in `build/shader/` are generated with `xxd -i` |
-| vitaGL | `16fe309` ([Rinnegatamante/vitaGL](https://github.com/Rinnegatamante/vitaGL)) | `deps/patches/vitaGL.patch`; built with `NO_SPLASHSCREEN=1 LOG_ERRORS=1 MKXP_DIAG=1 SINGLE_THREADED_GC=1 MKXP_NO_FBO_DEPTH=1` |
+| vitaGL | `16fe309` ([Rinnegatamante/vitaGL](https://github.com/Rinnegatamante/vitaGL)) | `deps/patches/vitaGL.patch`; built with `NO_SPLASHSCREEN=1 LOG_ERRORS=1 MKXP_DIAG=1 SINGLE_THREADED_GC=1 MKXP_NO_FBO_DEPTH=1 HAVE_SHADER_CACHE=1` |
 | Ruby | 3.1.6 (ruby-lang.org, checked by sha256) | `deps/patches/ruby-3.1.6-vita.patch` |
 | vita-compat | `deps/vita-compat/` | POSIX shims Ruby needs on the Vita (`libvitacompat.a`) |
 
@@ -60,9 +63,11 @@ the values of the release build. Without it, the options keep their defaults (mo
 
 ## Host tests
 
-`tools/hosttests/` contains host-side tests of the port's code (C++ and Ruby). Most of them need a
-host build of Ruby 3.1.6 and, where noted, your own copy of the game scripts or data, which are
-never part of this repository. Example (no game files needed):
+`tools/hosttests/` contains host-side tests of the port's code (C++ and Ruby), each with mutants that
+must fail (see `tools/hosttests/README.md`). `setup_env.sh` builds the host Ruby 3.1.6 they use and
+extracts the scripts from your own copy of the game (never part of this repository); `run_all.sh`
+runs them all. `tools/frametime.py <folder with perf.log>` summarizes the frame times of a session.
+Example of a single test that needs no game files (after `deps/setup.sh`):
 
 ```sh
 VITASDK=/usr/local/vitasdk tools/hosttests/cpu-paging/run.sh /tmp/cpu-paging-root/

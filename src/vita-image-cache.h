@@ -40,6 +40,14 @@ void countHit();
 size_t rawBytesOf(const std::string &path);
 /* The cache entry file for a source image ("" when no cache folder is set): read-ahead target. */
 std::string entryPathFor(const std::string &path);
+#ifdef MKXP_VITA_TEX_DIRECT_CACHE
+/* load() into memory given by `dst` once the size is known: dst(ctx, w, h, &stride) returns room for
+ * h rows of `stride` (>= w * 4) bytes, or null to give up. The block is decompressed in place and
+ * its tight rows moved to their stride. False (and nothing written past dst's room) when there is no
+ * valid entry, dst gives up, or memory for the compressed block runs out. */
+typedef unsigned char *(*DstFn)(void *ctx, int w, int h, size_t *stride);
+bool loadInto(const std::string &path, DstFn dst, void *ctx);
+#endif
 }
 
 #endif

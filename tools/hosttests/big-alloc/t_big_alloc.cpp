@@ -2,7 +2,7 @@
 // The Vita APIs are replaced by a fake mspace (bump allocator with a free list is not needed: the
 // test only checks routing, ownership, fallback when full, and that nothing is freed by the wrong
 // allocator). Build:
-//   g++ -std=gnu++17 -O1 -I. t_big_alloc.cpp -o t && ./t
+//   g++ -std=gnu++17 -O1 -DMKXP_VITA_BIG_ALLOC_MMAP -I. t_big_alloc.cpp -o t && ./t
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>

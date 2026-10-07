@@ -16,7 +16,7 @@
 #include <psp2/kernel/clib.h>
 
 #ifdef MKXP_VITA_FREEZE_PROBE
-/* Diagnostic only: freeze probe markers (mkxp_vita_minimal/src/vita_freeze_probe.h). */
+/* Diagnostic only: freeze probe markers (src/vita_freeze_probe.h). */
 #include "../vita_freeze_probe.h"
 #include "vita_build_tag.h"
 #else
@@ -646,6 +646,37 @@ static void vitaPerfFlush(unsigned int lastFrame)
             vitaFrameUs[vitaFrameN / 2] / 1000.0, vitaFrameUs[vitaFrameN * 9 / 10] / 1000.0,
             vitaFrameUs[vitaFrameN * 99 / 100] / 1000.0, vitaFrameUs[vitaFrameN - 1] / 1000.0,
             over17, over34, over50, over100);
+#ifdef MKXP_VITA_AUDIT_FIXES
+        /*
+         * Session frame-time percentiles (pre-alpha audit): a histogram of every frame since boot,
+         * 0.25 ms bins up to 250 ms (the rest counted with the maximum), so sess_p50..sess_p999 are
+         * exact to 0.25 ms for the whole session instead of per 120-frame window.
+         */
+        {
+            static uint32_t sessBins[1000];
+            static uint32_t sessOver = 0, sessN = 0;
+            static SceUInt64 sessMax = 0;
+            for (unsigned int k = 0; k < vitaFrameN; ++k) {
+                const SceUInt64 v = vitaFrameUs[k];
+                if (v < 250000) ++sessBins[v / 250]; else ++sessOver;
+                if (v > sessMax) sessMax = v;
+            }
+            sessN += vitaFrameN;
+            const uint32_t want[5] = { sessN / 2, sessN * 9 / 10, sessN * 95 / 100, sessN * 99 / 100, sessN - sessN / 1000 };
+            double pct[5] = { 0, 0, 0, 0, 0 };
+            uint32_t acc = 0;
+            int w = 0;
+            for (int bin = 0; bin < 1000 && w < 5; ++bin) {
+                acc += sessBins[bin];
+                while (w < 5 && acc > want[w]) pct[w++] = (bin + 1) * 0.25;
+            }
+            while (w < 5) pct[w++] = sessMax / 1000.0;   /* beyond 250 ms */
+            if (len > 0 && len < (int)sizeof(line))
+                len += snprintf(line + len, sizeof(line) - len,
+                    " sess_frames=%u sess_p50=%.2f sess_p90=%.2f sess_p95=%.2f sess_p99=%.2f sess_p999=%.2f sess_max=%.1f",
+                    (unsigned)sessN, pct[0], pct[1], pct[2], pct[3], pct[4], sessMax / 1000.0);
+        }
+#endif
         vitaFrameN = 0;
     }
 #endif
@@ -688,58 +719,6 @@ static void vitaPerfFlush(unsigned int lastFrame)
 }
 #endif
 
-#ifdef MKXP_VITA_HEARTBEAT_LOG
-/*
- * HEARTBEAT VITA: contatore monotono dei vitaRenderFrame() completati.
- * Scrive heartbeat.log solo dopo vglSwapBuffers, ai frame 60,120,240,...,3840.
- * NEW_GAME_ENTER (lato Ruby) salva solo il contatore; la riga MAP_RENDER_ENTER
- * viene scritta una volta sola, dopo il present del frame successivo.
- */
-static unsigned int vitaHeartbeatFrames = 0;
-static bool vitaHeartbeatMapPending = false;
-static bool vitaHeartbeatMapDone = false;
-static unsigned int vitaHeartbeatMapFrame = 0;
-
-void vitaHeartbeatMarkNewGame()
-{
-    if (vitaHeartbeatMapPending || vitaHeartbeatMapDone)
-        return;
-
-    vitaHeartbeatMapFrame = vitaHeartbeatFrames;
-    vitaHeartbeatMapPending = true;
-}
-
-static void vitaHeartbeatAfterPresent()
-{
-    const unsigned int frame = ++vitaHeartbeatFrames;
-
-    bool beat = false;
-    switch (frame) {
-    case 60: case 120: case 240: case 480: case 960: case 1920: case 3840:
-        beat = true;
-        break;
-    default:
-        break;
-    }
-
-    if (!beat && !vitaHeartbeatMapPending)
-        return;
-
-    FILE *f = fopen(VITA_GAME_ROOT "heartbeat.log", "a");
-    if (f) {
-        if (vitaHeartbeatMapPending)
-            fprintf(f, "MAP_RENDER_ENTER totalFrame=%u\n", vitaHeartbeatMapFrame);
-        if (beat)
-            fprintf(f, "HEARTBEAT frame=%u\n", frame);
-        fclose(f);
-    }
-
-    if (vitaHeartbeatMapPending) {
-        vitaHeartbeatMapPending = false;
-        vitaHeartbeatMapDone = true;
-    }
-}
-#endif
 
 #ifdef MKXP_VITA_SCREEN_FX
 /*
@@ -1443,9 +1422,6 @@ void vitaRenderFrame()
 
     VITA_FRAME_TRACE("after vglSwapBuffers");
 
-#ifdef MKXP_VITA_HEARTBEAT_LOG
-    vitaHeartbeatAfterPresent();
-#endif
 
 #ifdef MKXP_VITA_PERF_PROFILE
     {

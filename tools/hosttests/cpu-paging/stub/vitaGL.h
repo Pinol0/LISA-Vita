@@ -1,4 +1,4 @@
-/* host test stub (tools/hosttests/cpu-paging): the vitaGL calls bitmap-vita-minimal.cpp makes. */
+/* host test stub (tools/hosttests/cpu-paging): the vitaGL calls bitmap-vita.cpp makes. */
 #pragma once
 #include <GL/gl.h>
 #include <cstddef>

@@ -34,3 +34,8 @@ Fonts/
 
 # logs
 *.log
+
+# loading screen image (MKXP_VITA_QUIET_BOOT, 960x544; added later)
+/boot/*.png
+/tools/hosttests/sprite-native/spc_math
+/tools/hosttests/heap-ledger/t_heap_ledger

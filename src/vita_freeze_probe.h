@@ -2,7 +2,7 @@
  * Vita-only freeze probe (MKXP_VITA_FREEZE_PROBE, OFF by default). Diagnostic only.
  *
  * Markers are written to a static RAM ring buffer (no allocation, no locks, no I/O). A separate
- * watchdog thread (sceKernel only) dumps the state to ux0:data/ruby_vita_test/freeze.log when
+ * watchdog thread (sceKernel only) dumps the state to <game root>/freeze.log when
  * Graphics.update stops completing frames. Without the define every macro expands to nothing.
  */
 #ifndef VITA_FREEZE_PROBE_H

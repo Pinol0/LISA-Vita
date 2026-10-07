@@ -13,6 +13,9 @@
 #include <cstdint>
 #include <cstring>
 #include <vector>
+#ifdef MKXP_VITA_AUDIT_FIXES
+#include <climits>
+#endif
 
 namespace VitaBitmapCpu
 {
@@ -77,10 +80,31 @@ static inline BlendMemo *blendMemo()
  * when draw_text squeezes a string into a narrower rect.
  * Returns the number of destination pixels written.
  */
+#ifdef MKXP_VITA_AUDIT_FIXES
+/* Fix (MKXP_VITA_AUDIT_FIXES): rect arithmetic in 64 bits. A script can pass any Integer that fits
+ * an int (rb_get_args "i"); x + w, -w (w = INT_MIN) and the like overflowed int: undefined behaviour,
+ * found by tools/hosttests/cpu-kernels/t_kernel_fuzz.cpp. Same values for every rect that fits. */
+typedef long long VitaCoord;
+#define VITA_COORD(v) ((VitaCoord)(v))
+#else
+#define VITA_COORD(v) (v)
+#endif
+
+#ifdef MKXP_VITA_AUDIT_FIXES
+/* Coord = int for every rect whose arithmetic fits an int (all real calls: same int code as without
+ * the fix; long long here costs software long->float conversions per pixel on the Vita), long long
+ * otherwise. stretchBlt() below picks. */
+template <class Coord>
+static long stretchBltT(Image dst, Coord dx, Coord dy, Coord dw, Coord dh,
+                        ConstImage src, Coord sx, Coord sy, Coord sw, Coord sh, int opacity,
+                        bool smooth)
+{
+#else
 static long stretchBlt(Image dst, int dx, int dy, int dw, int dh,
                        ConstImage src, int sx, int sy, int sw, int sh, int opacity,
                        bool smooth = false)
 {
+#endif
     opacity = std::max(0, std::min(255, opacity));
     if (opacity == 0 || dw == 0 || dh == 0 || sw == 0 || sh == 0)
         return 0;
@@ -90,8 +114,13 @@ static long stretchBlt(Image dst, int dx, int dy, int dw, int dh,
     if (dh < 0) { dy += dh; dh = -dh; sy += sh; sh = -sh; }
 
     const float op = (float)opacity / 255.0f;
+#ifdef MKXP_VITA_AUDIT_FIXES
+    const int x0 = (int)std::max(dx, Coord(0)), x1 = (int)std::min(dx + dw, Coord(dst.w));
+    const int y0 = (int)std::max(dy, Coord(0)), y1 = (int)std::min(dy + dh, Coord(dst.h));
+#else
     const int x0 = std::max(dx, 0), x1 = std::min(dx + dw, dst.w);
     const int y0 = std::max(dy, 0), y1 = std::min(dy + dh, dst.h);
+#endif
     long written = 0;
 
 #ifdef MKXP_VITA_BLT_1TO1
@@ -106,9 +135,18 @@ static long stretchBlt(Image dst, int dx, int dy, int dw, int dh,
         /* Nearest texel for the destination pixel centre (GL_NEAREST). */
 #ifdef MKXP_VITA_BLT_1TO1
         const float fy = oneToOne ? 0.0f : (float)sy + ((float)(y - dy) + 0.5f) * (float)sh / (float)dh;
-        const int ty = oneToOne ? sy + (y - dy) : (int)std::floor(fy);
+#ifdef MKXP_VITA_AUDIT_FIXES
+        /* the float is range-checked before the cast (out of range float -> int is UB too) */
+        if (oneToOne ? (sy + (y - dy) < 0 || sy + (y - dy) >= src.h) : !(fy >= 0.0f && fy < (float)src.h))
+            continue;
+#endif
+        const int ty = oneToOne ? (int)(sy + (y - dy)) : (int)std::floor(fy);
 #else
         const float fy = (float)sy + ((float)(y - dy) + 0.5f) * (float)sh / (float)dh;
+#ifdef MKXP_VITA_AUDIT_FIXES
+        if (!(fy >= 0.0f && fy < (float)src.h))
+            continue;
+#endif
         const int ty = (int)std::floor(fy);
 #endif
         if (ty < 0 || ty >= src.h)
@@ -116,9 +154,17 @@ static long stretchBlt(Image dst, int dx, int dy, int dw, int dh,
         for (int x = x0; x < x1; ++x) {
 #ifdef MKXP_VITA_BLT_1TO1
             const float fx = oneToOne ? 0.0f : (float)sx + ((float)(x - dx) + 0.5f) * (float)sw / (float)dw;
-            const int tx = oneToOne ? sx + (x - dx) : (int)std::floor(fx);
+#ifdef MKXP_VITA_AUDIT_FIXES
+            if (oneToOne ? (sx + (x - dx) < 0 || sx + (x - dx) >= src.w) : !(fx >= 0.0f && fx < (float)src.w))
+                continue;
+#endif
+            const int tx = oneToOne ? (int)(sx + (x - dx)) : (int)std::floor(fx);
 #else
             const float fx = (float)sx + ((float)(x - dx) + 0.5f) * (float)sw / (float)dw;
+#ifdef MKXP_VITA_AUDIT_FIXES
+            if (!(fx >= 0.0f && fx < (float)src.w))
+                continue;
+#endif
             const int tx = (int)std::floor(fx);
 #endif
             if (tx < 0 || tx >= src.w)
@@ -198,6 +244,28 @@ static long stretchBlt(Image dst, int dx, int dy, int dw, int dh,
     return written;
 }
 
+#ifdef MKXP_VITA_AUDIT_FIXES
+static long stretchBlt(Image dst, int dx, int dy, int dw, int dh,
+                       ConstImage src, int sx, int sy, int sw, int sh, int opacity,
+                       bool smooth = false)
+{
+    /* The int instantiation computes: the normalized rect (dx + dw, -dw, sx + sw, -sw when dw < 0),
+     * its end dx + dw, and per pixel sx + (x - dx) with 0 <= x - dx < dw. All of it fits an int
+     * when these do. */
+    const VitaCoord ndw = dw < 0 ? -VITA_COORD(dw) : VITA_COORD(dw), ndh = dh < 0 ? -VITA_COORD(dh) : VITA_COORD(dh);
+    const VitaCoord ndx = dw < 0 ? VITA_COORD(dx) + dw : VITA_COORD(dx), ndy = dh < 0 ? VITA_COORD(dy) + dh : VITA_COORD(dy);
+    const VitaCoord nsx = dw < 0 ? VITA_COORD(sx) + sw : VITA_COORD(sx), nsy = dh < 0 ? VITA_COORD(sy) + sh : VITA_COORD(sy);
+    const VitaCoord nsw = dw < 0 ? -VITA_COORD(sw) : VITA_COORD(sw), nsh = dh < 0 ? -VITA_COORD(sh) : VITA_COORD(sh);
+    const VitaCoord v[] = { ndw, ndh, ndx, ndy, nsx, nsy, nsw, nsh, ndx + ndw, ndy + ndh, nsx + ndw, nsy + ndh };
+    bool fits = true;
+    for (VitaCoord c : v)
+        fits = fits && c >= INT_MIN && c <= INT_MAX;
+    if (fits)
+        return stretchBltT<int>(dst, dx, dy, dw, dh, src, sx, sy, sw, sh, opacity, smooth);
+    return stretchBltT<VitaCoord>(dst, dx, dy, dw, dh, src, sx, sy, sw, sh, opacity, smooth);
+}
+#endif
+
 static inline bool allTransparent(ConstImage img)
 {
     const size_t n = (size_t)img.w * img.h;
@@ -275,12 +343,22 @@ static void radialBlur(Image img, int angle, int divisions)
  * the pixels are REPLACED by the colour (no blending); negative sizes are normalized; the rect is
  * clipped to the bitmap. `c` is RGBA8. Returns the number of pixels written.
  */
+#ifdef MKXP_VITA_AUDIT_FIXES
+static long fillRect(Image dst, int x_, int y_, int w_, int h_, const unsigned char c[4])
+{
+    VitaCoord x = x_, y = y_, w = w_, h = h_;
+    if (w < 0) { x += w; w = -w; }
+    if (h < 0) { y += h; h = -h; }
+    const int x0 = (int)std::max(x, VITA_COORD(0)), x1 = (int)std::min(x + w, VITA_COORD(dst.w));
+    const int y0 = (int)std::max(y, VITA_COORD(0)), y1 = (int)std::min(y + h, VITA_COORD(dst.h));
+#else
 static long fillRect(Image dst, int x, int y, int w, int h, const unsigned char c[4])
 {
     if (w < 0) { x += w; w = -w; }
     if (h < 0) { y += h; h = -h; }
     const int x0 = std::max(x, 0), x1 = std::min(x + w, dst.w);
     const int y0 = std::max(y, 0), y1 = std::min(y + h, dst.h);
+#endif
     long written = 0;
 #ifdef MKXP_VITA_FAST_CPU_KERNELS
     /* Same result: build one row of the colour, then copy it to every row. */
@@ -312,10 +390,17 @@ static long fillRect(Image dst, int x, int y, int w, int h, const unsigned char 
 static long gradientFillRect(Image dst, int x, int y, int w, int h,
                              const float c1[4], const float c2[4], bool vertical)
 {
+#ifdef MKXP_VITA_AUDIT_FIXES
+    if (w <= 0 || h <= 0 || x >= dst.w || y >= dst.h || VITA_COORD(w) < -VITA_COORD(x) || VITA_COORD(h) < -VITA_COORD(y))
+        return 0;
+    const int x0 = std::max(x, 0), x1 = (int)std::min(VITA_COORD(x) + w, VITA_COORD(dst.w));
+    const int y0 = std::max(y, 0), y1 = (int)std::min(VITA_COORD(y) + h, VITA_COORD(dst.h));
+#else
     if (w <= 0 || h <= 0 || x >= dst.w || y >= dst.h || w < -x || h < -y)
         return 0;
     const int x0 = std::max(x, 0), x1 = std::min(x + w, dst.w);
     const int y0 = std::max(y, 0), y1 = std::min(y + h, dst.h);
+#endif
     long written = 0;
 #ifdef MKXP_VITA_FAST_CPU_KERNELS
     /* Same arithmetic, evaluated once per column (horizontal) or per row (vertical). */

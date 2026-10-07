@@ -12,7 +12,14 @@
   given back when memory runs low.
 - **Audio**: BGM/BGS/ME/SE in Ogg Vorbis and WAV through OpenAL; WAV is streamed.
 - **Memory**: large C++ blocks come from a dedicated pool so they do not fragment the heap Ruby
-  uses; decoded images are cached on the memory card (LZ4).
+  uses; decoded images are cached on the memory card in LZ4 chunks, decompressed into ordinary
+  memory and then written to the texture (vitaGL's memory is uncached: reading it back is slow).
+- **Shaders**: vitaGL compiles the shaders at run time; they are kept in
+  `ux0:data/shader_cache/<title id>/` (vitaGL's `HAVE_SHADER_CACHE`), so only the first launch pays.
+- **Sound effects**: decoded SEs are kept in a 4 MiB least-recently-used cache (upstream mkxp-z
+  evicted the most recently used one first, so the most played sounds were read again every time).
+- **Error handling**: C++ exceptions in the bindings (disposed objects, out of memory) become Ruby
+  exceptions (`RGSSError`, `NoMemoryError`, `Errno::ENOENT`, as in RGSS3) instead of aborting.
 - **Suspend/resume**: Ruby's timer-thread socket pair is repaired after standby.
 - **Performance**: the hottest parts of the game's per-frame Ruby work (event and sprite updates,
   map refresh, some third-party scripts' effects) have exact shortcuts in Ruby or C.

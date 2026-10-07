@@ -3,7 +3,7 @@
 # Also builds a mutation (trigger compared with == instead of !=) that must FAIL.
 cd "$(dirname "$0")"; B=$1; R=$2; D=$3
 mkdir -p out
-OBJS="$(ls $B/*.o | grep -vE '/(main|dmyenc)\.o$') $(find $B/coroutine -name '*.o') $(ls $B/enc/{ascii,us_ascii,unicode,utf_8}.o $B/enc/trans/newline.o)"
+OBJS="$(ls $B/*.o | grep -vE '/(main|dmyenc|dln|builtin|loadpath|localeinit)\.o$') $(find $B/coroutine -name '*.o') $(ls $B/enc/{ascii,us_ascii,unicode,utf_8}.o $B/enc/trans/newline.o)"
 LIBS="-lz -lpthread -lrt -ldl -lcrypt -lm"
 sed 's/neq(rb_ivar_get(self, idTrigger), INT2FIX(3))/eq(rb_ivar_get(self, idTrigger), INT2FIX(3))/' ../../../src/vita-event-native.cpp > out/mut.cpp
 g++ -std=gnu++17 -O1 -w -I$R/include -I$B/.ext/include/x86_64-linux host_main.cpp ../../../src/vita-event-native.cpp $OBJS $LIBS -o out/t || exit 1

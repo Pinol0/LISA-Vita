@@ -37,7 +37,7 @@ mkdir -p mkxp-z/build/shader
 ( cd mkxp-z/build && for f in ../shader/*; do [ "$(basename "$f")" = meson.build ] || xxd -i "$f" > "shader/$(basename "$f").xxd"; done )
 
 fetch vitaGL https://github.com/Rinnegatamante/vitaGL.git $VITAGL_COMMIT vitaGL.patch
-make -C vitaGL -j"$(nproc)" NO_SPLASHSCREEN=1 LOG_ERRORS=1 MKXP_DIAG=1 SINGLE_THREADED_GC=1 MKXP_NO_FBO_DEPTH=1
+make -C vitaGL -j"$(nproc)" NO_SPLASHSCREEN=1 LOG_ERRORS=1 MKXP_DIAG=1 SINGLE_THREADED_GC=1 MKXP_NO_FBO_DEPTH=1 HAVE_SHADER_CACHE=1
 
 make -C vita-compat
 

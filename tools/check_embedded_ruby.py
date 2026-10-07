@@ -11,8 +11,9 @@ import os, re, subprocess, sys, tempfile, textwrap
 bd = os.path.abspath(sys.argv[1])
 dump = sys.argv[sys.argv.index('--dump') + 1] if '--dump' in sys.argv else None
 if dump: os.makedirs(dump, exist_ok=True)
-cmd = subprocess.run(['make', '-n', '-B', '-f', 'CMakeFiles/mkxp_vita_minimal.dir/build.make',
-                      'CMakeFiles/mkxp_vita_minimal.dir/src/main.cpp.obj'], cwd=bd, capture_output=True, text=True).stdout
+tgt = 'lisa_vita'
+cmd = subprocess.run(['make', '-n', '-B', '-f', 'CMakeFiles/%s.dir/build.make' % tgt,
+                      'CMakeFiles/%s.dir/src/main.cpp.obj' % tgt], cwd=bd, capture_output=True, text=True).stdout
 line = next(l for l in cmd.splitlines() if 'main.cpp' in l and ' -c ' in l and 'g++' in l and 'cmake_echo' not in l)
 line = line.split('&&')[-1].strip()
 out = os.path.join(tempfile.mkdtemp(), 'main.i')

@@ -161,7 +161,9 @@ extern "C" __attribute__((weak)) volatile uintptr_t vitaHeapLedgerNewCaller;
 /*
  * Diagnostic (MKXP_VITA_OOM_LOG): before operator new throws std::bad_alloc (which no caller catches:
  * terminate -> abort, d63/d66), one qa.log line with the request and the state of both allocators.
- * Only a static buffer and sceIo: nothing here allocates. First 8 failures.
+ * Only a static buffer and sceIo: nothing here allocates. The first 8 failures, then every 16th
+ * (d92: the 8 lines ran out 20 minutes before the failure that mattered), at most 64 lines;
+ * n= counts them all.
  */
 #include <algorithm>
 #include <cstdio>
@@ -172,18 +174,19 @@ extern "C" __attribute__((weak)) volatile uintptr_t vitaHeapLedgerNewCaller;
 extern "C" void vitaBigAllocStats(unsigned *usedKb, unsigned *freeKb, unsigned *blocks, unsigned *fallbacks);
 static void vitaOomLog(std::size_t n, uintptr_t caller)
 {
-    static int count = 0;
-    static char buf[320];
-    if (count >= 8)
+    static unsigned total = 0, logged = 0;
+    static char buf[340];
+    ++total;
+    if (logged >= 64 || (total > 8 && total % 16))
         return;
-    ++count;
+    ++logged;
     const struct mallinfo mi = mallinfo();
     unsigned bu = 0, bf = 0, bb = 0, bfb = 0;
     vitaBigAllocStats(&bu, &bf, &bb, &bfb);
     const int len = std::snprintf(buf, sizeof(buf),
-        "OOM operator_new size=%u caller=%p anchor=%p thread=0x%x heap_used_kb=%u heap_arena_kb=%u heap_free_kb=%u "
+        "OOM n=%u operator_new size=%u caller=%p anchor=%p thread=0x%x heap_used_kb=%u heap_arena_kb=%u heap_free_kb=%u "
         "big_used_kb=%u big_free_kb=%u big_blocks=%u big_fallbacks=%u\n",
-        (unsigned)n, (void *)caller, (void *)&vitaBigAllocStats, (unsigned)sceKernelGetThreadId(),
+        total, (unsigned)n, (void *)caller, (void *)&vitaBigAllocStats, (unsigned)sceKernelGetThreadId(),
         (unsigned)(mi.uordblks / 1024), (unsigned)(mi.arena / 1024), (unsigned)(mi.fordblks / 1024), bu, bf, bb, bfb);
     const SceUID fd = sceIoOpen(VITA_GAME_ROOT "qa.log", SCE_O_WRONLY | SCE_O_CREAT | SCE_O_APPEND, 0666);
     if (fd >= 0) {

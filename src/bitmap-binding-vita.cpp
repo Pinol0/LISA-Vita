@@ -139,7 +139,14 @@ RB_METHOD_GUARD_END
 #endif
 
 
+#ifdef MKXP_VITA_AUDIT_FIXES
+/* Fix (MKXP_VITA_AUDIT_FIXES): guarded as upstream (bitmap-binding.cpp RB_METHOD_GUARD): on a disposed
+ * bitmap Bitmap::width throws (RGSSError "disposed bitmap"); unguarded, the C++ exception crossed Ruby's
+ * C frames: std::terminate, abort. */
+RB_METHOD_GUARD(bitmapVitaWidth)
+#else
 RB_METHOD(bitmapVitaWidth)
+#endif
 {
     RB_UNUSED_PARAM;
 
@@ -150,9 +157,19 @@ RB_METHOD(bitmapVitaWidth)
         bitmap->width()
     );
 }
+#ifdef MKXP_VITA_AUDIT_FIXES
+RB_METHOD_GUARD_END
+#endif
 
 
+#ifdef MKXP_VITA_AUDIT_FIXES
+/* Fix (MKXP_VITA_AUDIT_FIXES): guarded as upstream (bitmap-binding.cpp RB_METHOD_GUARD): on a disposed
+ * bitmap Bitmap::height throws (RGSSError "disposed bitmap"); unguarded, the C++ exception crossed Ruby's
+ * C frames: std::terminate, abort. */
+RB_METHOD_GUARD(bitmapVitaHeight)
+#else
 RB_METHOD(bitmapVitaHeight)
+#endif
 {
     RB_UNUSED_PARAM;
 
@@ -163,6 +180,9 @@ RB_METHOD(bitmapVitaHeight)
         bitmap->height()
     );
 }
+#ifdef MKXP_VITA_AUDIT_FIXES
+RB_METHOD_GUARD_END
+#endif
 
 RB_METHOD_GUARD(bitmapVitaRect)
 {
@@ -270,7 +290,12 @@ static void vitaTextLog(Bitmap *b, int x, int y, int w, int h, const char *text,
 }
 #endif
 
+#ifdef MKXP_VITA_AUDIT_FIXES
+/* Fix (MKXP_VITA_AUDIT_FIXES): guarded as upstream (disposed bitmap, out of memory: Ruby exceptions). */
+RB_METHOD_GUARD(bitmapDrawText)
+#else
 RB_METHOD(bitmapDrawText)
+#endif
 {
     Bitmap *bitmap =
         getPrivateData<Bitmap>(self);
@@ -367,6 +392,9 @@ RB_METHOD(bitmapDrawText)
 
     return self;
 }
+#ifdef MKXP_VITA_AUDIT_FIXES
+RB_METHOD_GUARD_END
+#endif
 
 #ifdef MKXP_VITA_FONT_V2
 /* Font.exist?(name): true if the TTF resolver finds a file for that family name. */
@@ -405,21 +433,6 @@ RB_METHOD_GUARD(bitmapVitaTextSize)
 }
 RB_METHOD_GUARD_END
 
-#ifdef MKXP_VITA_DEBUG_TILESET
-/* Diagnostic only: vita_bitmap_describe(bitmap, verify_tex) -> String (Bitmap#vitaDiagDescribe). */
-static VALUE vitaBitmapDescribe(VALUE self, VALUE bmp, VALUE verify)
-{
-    (void)self;
-    if (NIL_P(bmp))
-        return rb_str_new_cstr("bmp=nil");
-    Bitmap *b = getPrivateData<Bitmap>(bmp);
-    if (!b)
-        return rb_str_new_cstr("bmp=NULL");
-    char buf[512];
-    b->vitaDiagDescribe(buf, sizeof(buf), RTEST(verify));
-    return rb_str_new_cstr(buf);
-}
-#endif
 
 /* RGSS: stretch_blt(dest_rect, src_bitmap, src_rect[, opacity]) (as mkxp-z bitmap-binding.cpp). */
 RB_METHOD_GUARD(bitmapVitaStretchBlt)
@@ -477,7 +490,7 @@ RB_METHOD_GUARD_END
 
 #ifdef MKXP_VITA_GFX_V2
 #include "gl-util.h"
-/* sharedstate_test.cpp: Graphics.transition's map. vita_fx_trans_map(bitmap_or_nil, vague). */
+/* sharedstate-vita.cpp: Graphics.transition's map. vita_fx_trans_map(bitmap_or_nil, vague). */
 extern "C" void vitaFxSetTransMap(GLuint tex, int vague);
 static VALUE vitaFxTransMap(VALUE self, VALUE bmp, VALUE vague)
 {
@@ -494,7 +507,7 @@ static VALUE vitaFxTransMap(VALUE self, VALUE bmp, VALUE vague)
 }
 #endif
 
-/* sharedstate_test.cpp: last composited frame (544x416 RGBA8, row 0 = top), after glFinish. */
+/* sharedstate-vita.cpp: last composited frame (544x416 RGBA8, row 0 = top), after glFinish. */
 extern "C" bool vitaFxSnapPixels(const unsigned char **px, int *strideBytes);
 
 /* Graphics.snap_to_bitmap helper: vita_graphics_snap(bitmap) copies the last frame into it. */
@@ -727,8 +740,5 @@ rb_define_method(
 #ifdef MKXP_VITA_GFX_V2
     rb_define_global_function("vita_fx_trans_map", RUBY_METHOD_FUNC(vitaFxTransMap), 2);
 #endif
-#endif
-#ifdef MKXP_VITA_DEBUG_TILESET
-    rb_define_global_function("vita_bitmap_describe", RUBY_METHOD_FUNC(vitaBitmapDescribe), 2);
 #endif
 }

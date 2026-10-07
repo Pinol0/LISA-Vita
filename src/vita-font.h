@@ -36,7 +36,7 @@ struct VitaTextInfo
 namespace VitaFont
 {
 
-/* Directory holding the TTF files, e.g. "ux0:data/ruby_vita_test/Fonts/". */
+/* Directory holding the TTF files, e.g. "<game root>/Fonts/". */
 void setFontDir(const std::string &dir);
 
 #ifdef MKXP_VITA_FONT_V2
