@@ -1,0 +1,12 @@
+{
+  "_comment": "Edits applied by tools/livearea/make_livearea.py to the sources before conversion (the source files stay as they are). Delete or update an entry when its image changes.",
+  "icon0.png": {
+    "shift_rows": {"from_y": 110, "dx": 24, "_why": "Brad under the centre of the LISA logo"},
+    "shrink": {"scale": 0.84, "anchor": "bottom", "_why": "logo inside the round bubble, body still reaching the bottom edge"},
+    "fill": [255, 0, 0]
+  },
+  "startup.png": {
+    "move_text": {"box": [200, 30, 1340, 352], "dy": 102, "bg_x": 5, "color": [255, 255, 255],
+                  "_why": "LISA centred between the top edge (0) and Brad's head (589): text 39-344 -> 141-446"}
+  }
+}

@@ -27,15 +27,8 @@ Fonts/
 /tools/ps-icons/IconSet.png
 /tools/ps-icons/preview.png
 
-# LiveArea images (added later)
-/sce_sys/icon0.png
-/sce_sys/livearea/contents/*.png
-/art/
 
 # logs
 *.log
-
-# loading screen image (MKXP_VITA_QUIET_BOOT, 960x544; added later)
-/boot/*.png
 /tools/hosttests/sprite-native/spc_math
 /tools/hosttests/heap-ledger/t_heap_ledger
