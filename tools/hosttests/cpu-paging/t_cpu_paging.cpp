@@ -13,6 +13,7 @@
 #include <GL/gl.h>
 #include <png.h>
 
+#include <algorithm>
 #include <climits>
 #include <cstdio>
 #include <cstdlib>
@@ -33,6 +34,7 @@
 #include "vita-image-cache.h"
 #include "exception.h"
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <vitaGL.h>
 #include <psp2/ctrl.h>
 
@@ -188,16 +190,43 @@ int Color::serialSize() const { return 0; }
 void Color::serialize(char *) const {}
 bool VitaFont::available(const VitaFontSpec &) { return false; }
 bool VitaFont::drawText(unsigned char *, int, int, int, int, int, int, const char *, int, const VitaFontSpec &, VitaTextInfo *) { return false; }
+#ifdef MKXP_VITA_BITMAP_GC
+/* Ruby's oldmalloc as vitaGcReport reads it: bytes reported since the last major GC, limit 16 MiB. */
+static long long gOldmalloc = 0;
+static unsigned gReportGcs = 0;
+#endif
 /* Ruby's full GC: frees the bitmaps the game no longer references (the test's garbage list). */
 static std::vector<Bitmap *> gGarbage;
 static unsigned gGcRuns = 0;
 extern "C" void rb_gc_start(void)
 {
     ++gGcRuns;
+#ifdef MKXP_VITA_BITMAP_GC
+    if (gOldmalloc > ((long long)16 << 20))
+        ++gReportGcs;
+    gOldmalloc = 0;
+#endif
     for (Bitmap *b : gGarbage)
         delete b;
     gGarbage.clear();
 }
+
+#ifdef MKXP_VITA_BITMAP_GC
+/* Ruby's count of memory held outside its heap (MKXP_VITA_BITMAP_GC): must come back to 0. */
+static long long gGcAdjust = 0;
+static unsigned gGcCharges = 0;
+extern "C" void rb_gc_adjust_memory_usage(ssize_t diff)
+{
+    gGcAdjust += diff;
+    if (diff > 0) {
+        ++gGcCharges;
+        gOldmalloc += diff;
+    }
+}
+extern "C" uintptr_t rb_intern(const char *name) { return !std::strcmp(name, "oldmalloc_increase_bytes") ? 1 : 2; }
+extern "C" uintptr_t rb_id2sym(uintptr_t id) { return id; }
+extern "C" size_t rb_gc_stat(uintptr_t key) { return key == 1 ? (size_t)gOldmalloc : (size_t)16 << 20; }
+#endif
 
 extern "C" void vitaTexPagingTick();
 extern "C" void vitaTexPagingStats(unsigned *evicted, unsigned *restored, unsigned *fails, unsigned *outKb);
@@ -329,6 +358,102 @@ int main(int argc, char **argv)
     for (int i = 0; i < kFiles; ++i)
         writePng(gRoot + "img" + std::to_string(i) + ".png", rng);
 
+#ifdef MKXP_VITA_CLONE_OOM_RETRY
+    {   /* Bitmap#clone of a file bitmap (texture only) with no room for its CPU copy, where only a full GC
+           gives memory back: an unreferenced dirty bitmap (a VX Ace game, a hue animation sheet at the
+           start of a battle). Then nothing to give back: bad_alloc, and the new texture not lost. */
+        Bitmap *src = new Bitmap("img0");
+        Bitmap *junk = new Bitmap(520, 512);
+        junk->setPixel(0, 0, Color(1, 2, 3, 4));   /* dirty: CPU paging cannot drop it, only GC frees it */
+        gGarbage.push_back(junk);
+        const unsigned gc0 = gGcRuns;
+        gBigCap = gBigUsed + kImg / 2;
+        gStatsLie = true;
+        Bitmap *c = nullptr;
+        try { c = new Bitmap(*src); } catch (const std::bad_alloc &) {}
+        gStatsLie = false;
+        gBigCap = (size_t)1 << 40;
+        bool ok = c && gGcRuns > gc0;
+        if (c) {
+            Obj o{ c, gFilePx[0], gFileW[0], gFileH[0], false, true };
+            const int f0 = gFails;
+            checkRender(o, -1, -1);
+            checkPixel(o, 7, 9, -1, -1);
+            ok = ok && gFails == f0;
+            delete c;
+        }
+        std::printf("%s  clone with no room: a full GC gives memory back, the clone has the file's pixels\n", ok ? "PASS" : "FAIL");
+        if (!ok) ++gFails;
+        const size_t texBefore = gTex.size();
+        gBigCap = gBigUsed + kImg / 2;
+        gStatsLie = true;
+        bool threw = false;
+        try { Bitmap *d = new Bitmap(*src); delete d; } catch (const std::bad_alloc &) { threw = true; }
+        gStatsLie = false;
+        gBigCap = (size_t)1 << 40;
+        ok = threw && gTex.size() == texBefore;
+        std::printf("%s  clone with nothing to give back: bad_alloc, no texture left behind (%zu -> %zu)\n",
+                    ok ? "PASS" : "FAIL", texBefore, gTex.size());
+        if (!ok) ++gFails;
+        unsigned rOk = 0, rFail = 0;
+        if (FILE *q = std::fopen((gRoot + "qa.log").c_str(), "r")) {
+            char line[512];
+            while (std::fgets(line, sizeof line, q))
+                if (!std::strncmp(line, "CLONE_RETRY", 11)) (std::strstr(line, " ok=1") ? rOk : rFail)++;
+            std::fclose(q);
+        }
+        ok = rOk == 1 && rFail == 1;
+        std::printf("%s  qa.log CLONE_RETRY ok=1 once, ok=0 once (%u, %u)\n", ok ? "PASS" : "FAIL", rOk, rFail);
+        if (!ok) ++gFails;
+        delete src;
+    }
+#endif
+#ifdef MKXP_VITA_BITMAP_GC
+    {   /* Bitmap.new(w, h) with no room for its CPU copy, where only a full GC gives memory back (a VX
+           Ace game: a 640x480 Bitmap.new at the start of a battle); then nothing to give back:
+           bad_alloc and no texture left behind; reported bytes: w*h*4 per bitmap, back when it goes. */
+        Bitmap *junk = new Bitmap(520, 512);
+        junk->setPixel(0, 0, Color(1, 2, 3, 4));
+        const long long charged = gGcAdjust;
+        bool ok = charged == (long long)520 * 512 * 4;
+        gGarbage.push_back(junk);
+        const unsigned gc0 = gGcRuns;
+        gBigCap = gBigUsed + kImg / 2;
+        Bitmap *b = nullptr;
+        try { b = new Bitmap(520, 512); } catch (const std::bad_alloc &) {}
+        gBigCap = (size_t)1 << 40;
+        ok = ok && b && gGcRuns > gc0 && gGcAdjust == charged;   /* junk freed by the GC, b charged */
+        if (b) {
+            Obj o{ b, std::vector<unsigned char>((size_t)520 * 512 * 4, 0), 520, 512, false };
+            const int f0 = gFails;
+            checkRender(o, -1, -1);
+            ok = ok && gFails == f0;
+        }
+        std::printf("%s  Bitmap.new with no room: a full GC gives memory back, reported bytes follow (%lld)\n", ok ? "PASS" : "FAIL", gGcAdjust);
+        if (!ok) ++gFails;
+        const size_t texBefore = gTex.size();
+        const long long adjBefore = gGcAdjust;
+        gBigCap = gBigUsed + kImg / 2;
+        bool threw = false;
+        try { Bitmap *d = new Bitmap(520, 512); delete d; } catch (const std::bad_alloc &) { threw = true; }
+        gBigCap = (size_t)1 << 40;
+        ok = threw && gTex.size() == texBefore && gGcAdjust == adjBefore;
+        std::printf("%s  Bitmap.new with nothing to give back: bad_alloc, no texture, nothing reported (%zu -> %zu)\n",
+                    ok ? "PASS" : "FAIL", texBefore, gTex.size());
+        if (!ok) ++gFails;
+        delete b;
+        unsigned rOk = 0, rFail = 0;
+        if (FILE *q = std::fopen((gRoot + "qa.log").c_str(), "r")) {
+            char line[512];
+            while (std::fgets(line, sizeof line, q))
+                if (!std::strncmp(line, "NEW_RETRY", 9)) (std::strstr(line, " ok=1") ? rOk : rFail)++;
+            std::fclose(q);
+        }
+        ok = rOk == 1 && rFail == 1 && gGcAdjust == 0;
+        std::printf("%s  qa.log NEW_RETRY ok=1 once, ok=0 once (%u, %u); reported bytes back to 0 (%lld)\n", ok ? "PASS" : "FAIL", rOk, rFail, gGcAdjust);
+        if (!ok) ++gFails;
+    }
+#endif
     auto R = [&](int a, int b) { return std::uniform_int_distribution<int>(a, b)(rng); };
     std::vector<Obj> objs;
     std::map<std::pair<int, int>, int> cache;   /* (file, hue) -> objs index, as Cache keeps them */
@@ -356,7 +481,7 @@ int main(int argc, char **argv)
                 if (gMaxAlloc < gFilePx[f].size()) ++gDirectLoads;
             }
             Obj o{ nb, gFilePx[f], gFileW[f], gFileH[f], false, true };
-            objs.push_back(o);
+            objs.push_back(std::move(o));   /* a copy of the model can throw (fake pool) and orphan o.b */
             bi = (int)objs.size() - 1;
             cache[{ f, 0 }] = bi;
         } else {
@@ -365,10 +490,17 @@ int main(int argc, char **argv)
         if (hue == 0)
             return bi;
         /* Cache.hue_changed_bitmap: normal_bitmap(path).clone.hue_change(hue) */
-        Obj o{ new Bitmap(*objs[bi].b), objs[bi].exp, objs[bi].w, objs[bi].h, true };
-        o.b->hueChange(hue);
+        /* the model's copy first: it can throw bad_alloc too (fake pool), which would orphan the clone */
+        Obj o{ nullptr, objs[bi].exp, objs[bi].w, objs[bi].h, true };
+        o.b = new Bitmap(*objs[bi].b);
+        try {
+            o.b->hueChange(hue);
+        } catch (...) {   /* an escape (bad_alloc): the clone is the test's, not referenced anywhere */
+            delete o.b;
+            throw;
+        }
         oracle::VitaBitmapCpu::hueChange(oracle::VitaBitmapCpu::Image{ o.w, o.h, o.exp.data() }, hue);
-        objs.push_back(o);
+        objs.push_back(std::move(o));   /* a copy of the model can throw (fake pool) and orphan o.b */
         cache[{ f, hue }] = (int)objs.size() - 1;
         return (int)objs.size() - 1;
     };
@@ -390,8 +522,9 @@ int main(int argc, char **argv)
             } else if (op < 22 && !objs.empty()) {
                 /* a clone of anything (a hue clone of a hue clone keeps its hue) */
                 const int i = R(0, (int)objs.size() - 1);
-                Obj o{ new Bitmap(*objs[i].b), objs[i].exp, objs[i].w, objs[i].h, objs[i].hueClone };
-                objs.push_back(o);
+                Obj o{ nullptr, objs[i].exp, objs[i].w, objs[i].h, objs[i].hueClone };   /* model first (see cacheGet) */
+                o.b = new Bitmap(*objs[i].b);
+                objs.push_back(std::move(o));   /* a copy of the model can throw (fake pool) and orphan o.b */
             } else if (op < 27 && !objs.empty()) {
                 /* a second hue_change (or a first one on a file bitmap) */
                 const int i = R(0, (int)objs.size() - 1);
@@ -474,7 +607,7 @@ int main(int argc, char **argv)
                 const int f = R(0, kFiles - 1);
                 try {
                     Obj o{ new Bitmap(("img" + std::to_string(f)).c_str()), gFilePx[f], gFileW[f], gFileH[f], false, true };
-                    objs.push_back(o);
+                    objs.push_back(std::move(o));   /* a copy of the model can throw (fake pool) and orphan o.b */
                     ++directedLoads;
                     checkRender(objs.back(), step, (int)objs.size() - 1);
                 } catch (const Exception &e) {
@@ -518,6 +651,21 @@ int main(int argc, char **argv)
     for (auto &o : objs)
         delete o.b;
     rb_gc_start();
+#ifdef MKXP_VITA_BITMAP_GC
+    {
+        unsigned logged = 0;
+        if (FILE *q = std::fopen((gRoot + "qa.log").c_str(), "r")) {
+            char line[512];
+            while (std::fgets(line, sizeof line, q))
+                if (!std::strncmp(line, "BITMAP_GC n=", 12)) ++logged;
+            std::fclose(q);
+        }
+        const bool ok = gGcAdjust == 0 && gGcCharges > 100 && gReportGcs > 0 && logged == std::min(gReportGcs, 32u);
+        std::printf("%s  every bitmap gone: bytes reported to the GC back to 0 (%lld, %u charges); %u major GCs past 16 MiB, %u in qa.log\n",
+                    ok ? "PASS" : "FAIL", gGcAdjust, gGcCharges, gReportGcs, logged);
+        if (!ok) ++gFails;
+    }
+#endif
     unsigned retryOk = 0, retryFail = 0;
     if (FILE *q = std::fopen((gRoot + "qa.log").c_str(), "r")) {
         char line[512];

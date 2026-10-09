@@ -1,6 +1,12 @@
 #include <algorithm>
 #include "sharedstate.h"
 #include "vita_paths.h"
+#include "vita_screen.h"
+#ifdef MKXP_VITA_SCREEN_SIZE
+/* Feature (MKXP_VITA_SCREEN_SIZE): the RGSS screen size (vita_screen.h), set by Graphics.resize_screen
+ * (main.cpp vitaScreenResize). The scene and effect buffers follow it at the next frame. */
+extern "C" { int vitaScreenW = 544, vitaScreenH = 416; }
+#endif
 #include "global-ibo.h"
 #include "scene.h"
 #include "config.h"
@@ -142,10 +148,21 @@ public:
             return;
 
         static Quad *quad = nullptr;
+#ifdef MKXP_VITA_SCREEN_SIZE
+        static int quadW = 0, quadH = 0;
+        if (!quad)
+            quad = new Quad();
+        if (quadW != VITA_SCREEN_W || quadH != VITA_SCREEN_H) {
+            quadW = VITA_SCREEN_W;
+            quadH = VITA_SCREEN_H;
+            quad->setTexPosRect(FloatRect(0, 0, quadW, quadH), FloatRect(0, 0, quadW, quadH));
+        }
+#else
         if (!quad) {
             quad = new Quad();
             quad->setTexPosRect(FloatRect(0, 0, 544, 416), FloatRect(0, 0, 544, 416));
         }
+#endif
 
         FlatColorShader &shader = shState->shaders().flatColor;
         shader.bind();
@@ -748,9 +765,16 @@ extern "C" void vitaFxSetTransMap(GLuint tex, int vague)
 
 static TEXFBO &vitaFxTarget(TEXFBO &t)
 {
+#ifdef MKXP_VITA_SCREEN_SIZE
+    /* a buffer of the previous screen size is replaced (Graphics.resize_screen) */
+    if (t.tex != TEX::ID(0) && (t.width != VITA_SCREEN_W || t.height != VITA_SCREEN_H)) {
+        TEXFBO::fini(t);
+        t = TEXFBO();
+    }
+#endif
     if (t.tex == TEX::ID(0)) {
         TEXFBO::init(t);
-        TEXFBO::allocEmpty(t, 544, 416);
+        TEXFBO::allocEmpty(t, VITA_SCREEN_W, VITA_SCREEN_H);
         TEXFBO::linkFBO(t);
     }
     return t;
@@ -759,10 +783,21 @@ static TEXFBO &vitaFxTarget(TEXFBO &t)
 static Quad &vitaFxQuad()
 {
     static Quad *q = nullptr;
+#ifdef MKXP_VITA_SCREEN_SIZE
+    static int qW = 0, qH = 0;
+    if (!q)
+        q = new Quad();
+    if (qW != VITA_SCREEN_W || qH != VITA_SCREEN_H) {
+        qW = VITA_SCREEN_W;
+        qH = VITA_SCREEN_H;
+        q->setTexPosRect(FloatRect(0, 0, qW, qH), FloatRect(0, 0, qW, qH));
+    }
+#else
     if (!q) {
         q = new Quad();
         q->setTexPosRect(FloatRect(0, 0, 544, 416), FloatRect(0, 0, 544, 416));
     }
+#endif
     return *q;
 }
 
@@ -770,14 +805,14 @@ static Quad &vitaFxQuad()
 static void vitaFxCopy(TEXFBO &dst, const TEXFBO &src)
 {
     FBO::bind(dst.fbo);
-    glState.viewport.pushSet(IntRect(0, 0, 544, 416));
+    glState.viewport.pushSet(IntRect(0, 0, VITA_SCREEN_W, VITA_SCREEN_H));
     glState.scissorTest.pushSet(false);
     glState.blend.pushSet(false);
     SimpleShader &shader = shState->shaders().simple;
     shader.bind();
     shader.applyViewportProj();
     shader.setTranslation(Vec2i());
-    shader.setTexSize(Vec2i(544, 416));
+    shader.setTexSize(Vec2i(VITA_SCREEN_W, VITA_SCREEN_H));
     TEX::bind(src.tex);
     vitaFxQuad().draw();
     glState.blend.pop();
@@ -826,7 +861,7 @@ extern "C" bool vitaFxSnapPixels(const unsigned char **px, int *strideBytes)
     glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTex);
     TEX::bind(vitaFxLastScene->tex);
     *px = (const unsigned char *)vglGetTexDataPointer(GL_TEXTURE_2D);
-    *strideBytes = ((544 + 7) & ~7) * 4;
+    *strideBytes = ((VITA_SCREEN_W + 7) & ~7) * 4;
     glBindTexture(GL_TEXTURE_2D, (GLuint)prevTex);
     return *px != nullptr;
 }
@@ -851,16 +886,26 @@ static void vitaGrayPass(float gray, const IntRect &viewportRect)
     TEXFBO &dst = (k < 2) ? vitaFxTarget(vitaSceneExtra[k]) : (&src == vitaSceneBase ? vitaSceneExtra[0] : *vitaSceneBase);
 #ifdef MKXP_VITA_SCENE_STENCIL
     {
+#ifdef MKXP_VITA_SCREEN_SIZE
+        /* per buffer texture: a buffer reallocated for a new screen size needs its own */
+        static TEX::ID withStencil[2] = { TEX::ID(0), TEX::ID(0) };
+        if (k < 2 && withStencil[k] != dst.tex) {
+            FBO::bind(dst.fbo);
+            vitaSceneDepthStencil(dst);
+            withStencil[k] = dst.tex;
+        }
+#else
         static bool withStencil[2] = { false, false };
         if (k < 2 && !withStencil[k]) {
             FBO::bind(dst.fbo);
             vitaSceneDepthStencil(dst);
             withStencil[k] = true;
         }
+#endif
     }
 #endif
     const bool encloses = viewportRect.x <= 0 && viewportRect.y <= 0 &&
-                          viewportRect.x + viewportRect.w >= 544 && viewportRect.y + viewportRect.h >= 416;
+                          viewportRect.x + viewportRect.w >= VITA_SCREEN_W && viewportRect.y + viewportRect.h >= VITA_SCREEN_H;
     if (!encloses)
         vitaFxCopy(dst, src);            /* binds dst; scissor/blend restored afterwards */
     else
@@ -871,7 +916,7 @@ static void vitaGrayPass(float gray, const IntRect &viewportRect)
     shader.setGray(gray);
     shader.applyViewportProj();
     shader.setTranslation(Vec2i());
-    shader.setTexSize(Vec2i(544, 416));
+    shader.setTexSize(Vec2i(VITA_SCREEN_W, VITA_SCREEN_H));
     TEX::bind(src.tex);
     vitaFxQuad().draw();
     glState.blend.pop();
@@ -885,7 +930,7 @@ static TEXFBO &vitaFxApply(TEXFBO &scene)
     vitaFxLastScene = &scene;
     if (vitaFxBrightness < 255) {
         FBO::bind(scene.fbo);
-        glState.viewport.pushSet(IntRect(0, 0, 544, 416));
+        glState.viewport.pushSet(IntRect(0, 0, VITA_SCREEN_W, VITA_SCREEN_H));
         glState.scissorTest.pushSet(false);
         glState.blend.pushSet(true);
         glState.blendMode.pushSet(BlendNormal);
@@ -907,7 +952,7 @@ static TEXFBO &vitaFxApply(TEXFBO &scene)
 
     TEXFBO &out = vitaFxTarget(vitaFxTransFBO);
     FBO::bind(out.fbo);
-    glState.viewport.pushSet(IntRect(0, 0, 544, 416));
+    glState.viewport.pushSet(IntRect(0, 0, VITA_SCREEN_W, VITA_SCREEN_H));
     glState.scissorTest.pushSet(false);
     glState.blend.pushSet(false);
 #ifdef MKXP_VITA_GFX_V2
@@ -917,7 +962,7 @@ static TEXFBO &vitaFxApply(TEXFBO &scene)
         shader.bind();
         shader.applyViewportProj();
         shader.setTranslation(Vec2i());
-        shader.setTexSize(Vec2i(544, 416));
+        shader.setTexSize(Vec2i(VITA_SCREEN_W, VITA_SCREEN_H));
         shader.setFrozenScene(vitaFxFrozenFBO.tex);
         shader.setCurrentScene(scene.tex);
         shader.setTransMap(TEX::ID(vitaFxTransMapTex));
@@ -931,7 +976,7 @@ static TEXFBO &vitaFxApply(TEXFBO &scene)
     shader.bind();
     shader.applyViewportProj();
     shader.setTranslation(Vec2i());
-    shader.setTexSize(Vec2i(544, 416));
+    shader.setTexSize(Vec2i(VITA_SCREEN_W, VITA_SCREEN_H));
     shader.setFrozenScene(vitaFxFrozenFBO.tex);
     shader.setCurrentScene(scene.tex);
     shader.setProg(vitaFxProg);
@@ -942,6 +987,87 @@ static TEXFBO &vitaFxApply(TEXFBO &scene)
     glState.viewport.pop();
     return out;
 }
+#endif
+
+#ifdef MKXP_VITA_DISPLAY_TOGGLE
+#include <stdio.h>
+#include <string.h>
+/* host test display-toggle: from here to "end display toggle" */
+/*
+ * Feature (MKXP_VITA_DISPLAY_TOGGLE / MKXP_VITA_DISPLAY_MENU): where the final picture goes on the
+ * Vita's 960x544. Modes, kept in <game root>display.cfg and read at the first frame:
+ *  - original: the game's proportions, 544 high (black side bars);
+ *  - stretch:  the whole screen, stretched (SELECT builds);
+ *  - pixel:    the game's pixels 1:1, centred, not scaled;
+ *  - wide:     placed as original; the game itself draws wider (patches/display_option.rb calls
+ *              Graphics.resize_screen(736, 416)), so it fills the screen.
+ * Unknown or missing: original. qa.log DISPLAY_MODE.
+ */
+enum { VITA_DISPLAY_ORIGINAL = 0, VITA_DISPLAY_STRETCH = 1, VITA_DISPLAY_PIXEL = 2, VITA_DISPLAY_WIDE = 3 };
+static const char *const vitaDisplayNames[] = { "original", "stretch", "pixel", "wide" };
+static int vitaDisplayMode = -1;   /* -1 not read yet */
+
+static int vitaDisplayModeNow()
+{
+    if (vitaDisplayMode < 0) {
+        vitaDisplayMode = VITA_DISPLAY_ORIGINAL;
+        FILE *f = fopen(VITA_GAME_ROOT "display.cfg", "r");
+        if (f) {
+            char b[16] = { 0 };
+            if (fgets(b, sizeof(b), f)) {
+                for (int m = 0; m < 4; ++m)
+                    if (!strncmp(b, vitaDisplayNames[m], strlen(vitaDisplayNames[m])))
+                        vitaDisplayMode = m;
+            }
+            fclose(f);
+        }
+    }
+    return vitaDisplayMode;
+}
+
+/* The final picture on 960x544 for an RGSS screen scrW x scrH whose proportional width at 544 high
+ * is aspectW: x, y, w, h. Pixel mode: 1:1, centred (h != 544: copied without scaling). */
+static void vitaDisplayRect(int aspectW, int scrW, int scrH, int *x, int *y, int *w, int *h)
+{
+    const int m = vitaDisplayModeNow();
+    if (m == VITA_DISPLAY_PIXEL && scrW <= 960 && scrH < 544) {
+        *w = scrW;
+        *h = scrH;
+    } else {
+        *w = m == VITA_DISPLAY_STRETCH ? 960 : aspectW;
+        *h = 544;
+    }
+    *x = (960 - *w) / 2;
+    *y = (544 - *h) / 2;
+}
+
+extern "C" int vitaDisplayGet()
+{
+    return vitaDisplayModeNow();
+}
+
+extern "C" void vitaDisplaySet(int mode)
+{
+    vitaDisplayModeNow();   /* reads display.cfg the first time */
+    vitaDisplayMode = (mode >= 0 && mode < 4) ? mode : VITA_DISPLAY_ORIGINAL;
+    FILE *f = fopen(VITA_GAME_ROOT "display.cfg", "w");
+    if (f) {
+        fprintf(f, "%s\n", vitaDisplayNames[vitaDisplayMode]);
+        fclose(f);
+    }
+    f = fopen(VITA_GAME_ROOT "qa.log", "a");
+    if (f) {
+        fprintf(f, "DISPLAY_MODE %s\n", vitaDisplayNames[vitaDisplayMode]);
+        fclose(f);
+    }
+}
+
+/* SELECT (builds without the menu): original <-> stretch. */
+extern "C" void vitaDisplayToggle()
+{
+    vitaDisplaySet(vitaDisplayGet() == VITA_DISPLAY_STRETCH ? VITA_DISPLAY_ORIGINAL : VITA_DISPLAY_STRETCH);
+}
+/* end display toggle */
 #endif
 
 #ifdef MKXP_VITA_FINAL_SHARP_BILINEAR
@@ -1042,8 +1168,13 @@ static bool vitaSbPresent(TEXFBO &src, int x, int w)
     glState.scissorTest.pushSet(false);
     glState.blend.pushSet(false);
     glState.program.set(vitaSbProg);
+#ifdef MKXP_VITA_SCREEN_SIZE
+    gl.Uniform2f(vitaSbTexSize, (float)VITA_SCREEN_W, (float)VITA_SCREEN_H);
+    gl.Uniform2f(vitaSbScale, (float)w / VITA_SCREEN_W, 544.f / VITA_SCREEN_H);   /* 544: the Vita's screen */
+#else
     gl.Uniform2f(vitaSbTexSize, 544.f, 416.f);
     gl.Uniform2f(vitaSbScale, (float)w / 544.f, 544.f / 416.f);
+#endif
     gl.Uniform1i(vitaSbTex, 0);
 
     gl.ActiveTexture(GL_TEXTURE0);
@@ -1138,8 +1269,14 @@ void vitaRenderFrame()
     VITA_FREEZE_MARK(SCENE_FBO_SETUP_ENTER);
     static TEXFBO sceneFBO;
 
+#ifdef MKXP_VITA_SCREEN_SIZE
+    if (sceneFBO.tex != TEX::ID(0) && (sceneFBO.width != VITA_SCREEN_W || sceneFBO.height != VITA_SCREEN_H)) {
+        testTexPool->release(sceneFBO);   /* Graphics.resize_screen: a new one below */
+        sceneFBO = TEXFBO();
+    }
+#endif
     if (sceneFBO.tex == TEX::ID(0)) {
-        sceneFBO = testTexPool->request(544, 416);
+        sceneFBO = testTexPool->request(VITA_SCREEN_W, VITA_SCREEN_H);
 #ifdef MKXP_VITA_SCENE_STENCIL
         FBO::bind(sceneFBO.fbo);
         vitaSceneDepthStencil(sceneFBO);
@@ -1157,8 +1294,8 @@ void vitaRenderFrame()
         IntRect(
             0,
             0,
-            544,
-            416
+            VITA_SCREEN_W,
+            VITA_SCREEN_H
         )
     );
 
@@ -1175,7 +1312,7 @@ void vitaRenderFrame()
     vitaClearShader.setTranslation(Vec2i());
     vitaClearShader.setColor(Vec4(0.0f, 0.0f, 0.0f, 1.0f));
 
-    vitaClearQuad.setPosRect(FloatRect(0, 0, 544, 416));
+    vitaClearQuad.setPosRect(FloatRect(0, 0, VITA_SCREEN_W, VITA_SCREEN_H));
     vitaClearQuad.draw();
     VITA_FREEZE_MARK(SCENE_FBO_SETUP_EXIT);
 
@@ -1328,25 +1465,49 @@ void vitaRenderFrame()
             GL_NEAREST
         );
 #else
-        const int vitaAspectX = (960 - MKXP_VITA_ASPECT_WIDTH) / 2;
+#ifdef MKXP_VITA_SCREEN_SIZE
+        /* the same uniform scale for any RGSS screen: height 544, width in proportion */
+        const int vitaAspectW = (544 * VITA_SCREEN_W + VITA_SCREEN_H / 2) / VITA_SCREEN_H;
+#define MKXP_VITA_ASPECT_WIDTH_NOW vitaAspectW
+#else
+#define MKXP_VITA_ASPECT_WIDTH_NOW MKXP_VITA_ASPECT_WIDTH
+#endif
+#ifdef MKXP_VITA_DISPLAY_TOGGLE
+        int vitaDispX = 0, vitaDispY = 0, vitaDispW = 0, vitaDispH = 0;
+        vitaDisplayRect(MKXP_VITA_ASPECT_WIDTH_NOW, VITA_SCREEN_W, VITA_SCREEN_H, &vitaDispX, &vitaDispY, &vitaDispW, &vitaDispH);
+#undef MKXP_VITA_ASPECT_WIDTH_NOW
+#define MKXP_VITA_ASPECT_WIDTH_NOW vitaDispW
+        if (vitaDispH != 544) {
+            /* pixel mode: the game's pixels copied 1:1, centred (vertical flip as the others) */
+            gl.BlitFramebuffer(
+                0, 0, VITA_SCREEN_W, VITA_SCREEN_H,
+                vitaDispX, vitaDispY + vitaDispH, vitaDispX + vitaDispW, vitaDispY,
+                GL_COLOR_BUFFER_BIT,
+                GL_NEAREST
+            );
+        } else
+#endif
+        {
+        const int vitaAspectX = (960 - MKXP_VITA_ASPECT_WIDTH_NOW) / 2;
 #ifdef MKXP_VITA_FINAL_SHARP_BILINEAR
 #ifdef MKXP_VITA_SCREEN_FX
-        if (!vitaSbPresent(vitaFxOut, vitaAspectX, MKXP_VITA_ASPECT_WIDTH))
+        if (!vitaSbPresent(vitaFxOut, vitaAspectX, MKXP_VITA_ASPECT_WIDTH_NOW))
 #else
-        if (!vitaSbPresent(sceneFBO, vitaAspectX, MKXP_VITA_ASPECT_WIDTH))
+        if (!vitaSbPresent(sceneFBO, vitaAspectX, MKXP_VITA_ASPECT_WIDTH_NOW))
 #endif
 #endif
         gl.BlitFramebuffer(
-            0, 0, 544, 416,
-            vitaAspectX, 544, vitaAspectX + MKXP_VITA_ASPECT_WIDTH, 0,
+            0, 0, VITA_SCREEN_W, VITA_SCREEN_H,
+            vitaAspectX, 544, vitaAspectX + MKXP_VITA_ASPECT_WIDTH_NOW, 0,
             GL_COLOR_BUFFER_BIT,
             VITA_FINAL_FILTER
         );
+        }
 #endif
     }
 #else
     gl.BlitFramebuffer(
-        0, 0, 544, 416,
+        0, 0, VITA_SCREEN_W, VITA_SCREEN_H,
         0, 544, 960, 0,
         GL_COLOR_BUFFER_BIT,
         VITA_FINAL_FILTER

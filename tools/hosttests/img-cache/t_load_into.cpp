@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <random>
 #include <string>
 #include <vector>
@@ -126,5 +127,6 @@ int main(int argc, char **argv)
         ++cases;
     }
     std::printf("cases=%d unaligned_widths=%d fails=%d\n%s\n", cases, unaligned, fails, fails ? "FAIL" : "PASS");
+    std::filesystem::remove_all(root);   /* ~78 MB of PNGs and cache entries per run */
     return fails ? 1 : 0;
 }

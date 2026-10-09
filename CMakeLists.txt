@@ -16,9 +16,17 @@ project(lisa_vita LANGUAGES C CXX)
 
 include("${VITASDK}/share/vita.cmake" REQUIRED)
 
+# The app (another RPG Maker VX Ace game: its own title ID, name, data folder MKXP_VITA_GAME_ROOT,
+# boot title MKXP_VITA_BOOT_TITLE, images MKXP_VITA_LIVEAREA_DIR / MKXP_VITA_BOOT_IMAGE).
 set(VITA_APP_NAME "Lisa: The Painful" CACHE STRING "LiveArea title")
 set(VITA_TITLEID "LISA00001" CACHE STRING "Title ID")
-set(VITA_VERSION "00.10")
+set(VITA_VERSION "00.20" CACHE STRING "App version (XX.YY): 00.20 = alpha 0.2")
+set(MKXP_VITA_BOOT_TITLE "LISA: The Painful" CACHE STRING "Title on the loading screen and in boot messages")
+set(MKXP_VITA_LIVEAREA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/sce_sys" CACHE PATH "icon0.png and livearea/contents/ (packaged if present)")
+set(MKXP_VITA_BOOT_IMAGE "${CMAKE_CURRENT_SOURCE_DIR}/boot/loading.png" CACHE FILEPATH "Loading screen image, 960x544 (empty: text)")
+if(NOT MKXP_VITA_BOOT_TITLE STREQUAL "LISA: The Painful")   # the default is main.cpp's
+    set_property(SOURCE src/main.cpp APPEND PROPERTY COMPILE_DEFINITIONS "MKXP_VITA_BOOT_TITLE=\"${MKXP_VITA_BOOT_TITLE}\"")
+endif()
 
 # Dependencies (deps/setup.sh fetches, patches and builds them there).
 set(MKXP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/deps/mkxp-z" CACHE PATH "patched mkxp-z source tree")
@@ -265,6 +273,33 @@ if(MKXP_VITA_ASPECT_CORRECT)
     set_property(SOURCE src/shell/sharedstate-vita.cpp APPEND PROPERTY
         COMPILE_DEFINITIONS MKXP_VITA_ASPECT_CORRECT MKXP_VITA_ASPECT_WIDTH=${MKXP_VITA_ASPECT_WIDTH})
     set(VITA_TAG_ASPECT " aspect=${MKXP_VITA_ASPECT_WIDTH}x544")
+endif()
+# Fix: Plane#bitmap= rebuilds the tiling quads (mkxp-z plane.cpp: without npot_repeat they follow the
+# bitmap's size; a new bitmap with the same ox/oy kept the old tiling: LISA intro sky, map 36).
+option(MKXP_VITA_PLANE_BITMAP "Plane: a new bitmap rebuilds the tiling quads" OFF)
+if(MKXP_VITA_PLANE_BITMAP)
+    set_property(SOURCE ${MKXP_DIR}/src/display/plane.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_PLANE_BITMAP)
+endif()
+
+# Feature: SELECT switches the final picture between the game's proportions (ASPECT_WIDTH x 544, black
+# side bars) and the whole screen (960x544, stretched); kept in <game root>display.cfg.
+option(MKXP_VITA_DISPLAY_TOGGLE "SELECT: original proportions <-> whole screen (stretched), kept in display.cfg" OFF)
+if(MKXP_VITA_DISPLAY_TOGGLE)
+    if(NOT MKXP_VITA_ASPECT_CORRECT)
+        message(FATAL_ERROR "MKXP_VITA_DISPLAY_TOGGLE needs MKXP_VITA_ASPECT_CORRECT (the original-proportions mode)")
+    endif()
+    set_property(SOURCE src/shell/sharedstate-vita.cpp src/main.cpp APPEND PROPERTY
+        COMPILE_DEFINITIONS MKXP_VITA_DISPLAY_TOGGLE)
+endif()
+# Feature (LISA): the display mode chosen in the game's options menu (Options/Quit: "Screen: Pixel 1:1 |
+# Original | Wide", patches/display_option.rb; Graphics.vita_display_mode) instead of SELECT. Wide = the
+# game drawn at 736x416 (Graphics.resize_screen, allowed up to 960x544 with this option).
+option(MKXP_VITA_DISPLAY_MENU "Display mode in LISA's options menu (Pixel 1:1 / Original / Wide) instead of SELECT" OFF)
+if(MKXP_VITA_DISPLAY_MENU)
+    if(NOT MKXP_VITA_DISPLAY_TOGGLE OR NOT MKXP_VITA_SCREEN_SIZE)
+        message(FATAL_ERROR "MKXP_VITA_DISPLAY_MENU needs MKXP_VITA_DISPLAY_TOGGLE (the display modes) and MKXP_VITA_SCREEN_SIZE (Wide)")
+    endif()
+    set_property(SOURCE src/main.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_DISPLAY_MENU)
 endif()
 if(MKXP_VITA_FINAL_FILTER STREQUAL "LINEAR")
     set_property(SOURCE src/shell/sharedstate-vita.cpp APPEND PROPERTY
@@ -801,6 +836,29 @@ if(MKXP_VITA_PATCHES)
     set_property(SOURCE src/main.cpp src/bitmap-vita.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_PATCHES)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} patches=ON")
 endif()
+# Feature (LISA): achievements (patches/achievements.rb): the game's Steam unlocks kept in achievements.dat,
+# a window at each unlock, an "Achievements" list on the title screen. Added to the package's index.
+option(MKXP_VITA_ACHIEVEMENTS "LISA achievements: unlock window, title-screen list, achievements.dat" OFF)
+# Test only: LISA in "true widescreen" (patches/widescreen_test.rb: Graphics.resize_screen(736, 416), 23x13
+# tiles, about the Vita's 16:9), with resize_screen allowed up to 960x544. Needs MKXP_VITA_SCREEN_SIZE.
+option(MKXP_VITA_WIDE_TEST "TEST: LISA drawn at 736x416 (true widescreen experiment)" OFF)
+if(MKXP_VITA_WIDE_TEST)
+    if(NOT MKXP_VITA_SCREEN_SIZE OR NOT MKXP_VITA_PATCHES)
+        message(FATAL_ERROR "MKXP_VITA_WIDE_TEST needs MKXP_VITA_SCREEN_SIZE and MKXP_VITA_PATCHES")
+    endif()
+    set_property(SOURCE src/main.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_WIDE_TEST)
+    set(VITA_TAG_DIAG "${VITA_TAG_DIAG} wide_test=ON")
+endif()
+# Diagnostic only: PNG of the screen and the parallax / tone state on LISA's intro maps (26-40), twice per
+# map (patches/sky_snap.rb; Bitmap#vita_save_png). qa.log SKY_SNAP; files sky_mapNNN_fF.png.
+option(MKXP_VITA_SKY_SNAP "DIAG: screen PNGs and parallax/tone state on LISA's intro maps" OFF)
+if((MKXP_VITA_ACHIEVEMENTS OR MKXP_VITA_SKY_SNAP OR MKXP_VITA_DISPLAY_MENU) AND NOT MKXP_VITA_PATCHES)
+    message(FATAL_ERROR "MKXP_VITA_ACHIEVEMENTS / MKXP_VITA_SKY_SNAP / MKXP_VITA_DISPLAY_MENU are patches: they need MKXP_VITA_PATCHES")
+endif()
+if(MKXP_VITA_SKY_SNAP)
+    set_property(SOURCE src/bitmap-vita.cpp src/bitmap-binding-vita.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_SKY_SNAP)
+    set(VITA_TAG_DIAG "${VITA_TAG_DIAG} sky_snap=ON")
+endif()
 # Fix: the scene framebuffers get a depth/stencil surface, so vitaGL's scissor is exact (window
 # contents / viewports clipped at the pixel instead of the GPU tile). sharedstate-vita.cpp.
 option(MKXP_VITA_SCENE_STENCIL "Depth/stencil surface on the scene framebuffers (exact scissor)" OFF)
@@ -1055,6 +1113,67 @@ if(MKXP_VITA_ANALOG_INPUT)
         message(FATAL_ERROR "MKXP_VITA_ANALOG_INPUT requires MKXP_VITA_INPUT_V3")
     endif()
     set_property(SOURCE src/main.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_ANALOG_INPUT)
+endif()
+
+# Feature: Graphics.resize_screen up to 640x480 as RGSS3 (vita_screen.h in mkxp-z): scene / effect
+# buffers, projections, viewports and the final presentation (height 544, width in proportion) follow
+# the RGSS screen size. Whole target (mkxp-z's viewport / windowvx / shader use it).
+option(MKXP_VITA_SCREEN_SIZE "Variable RGSS screen size (Graphics.resize_screen)" OFF)
+if(MKXP_VITA_SCREEN_SIZE)
+    if(NOT MKXP_VITA_SCREEN_FX OR NOT MKXP_VITA_GFX_V2)
+        message(FATAL_ERROR "MKXP_VITA_SCREEN_SIZE requires MKXP_VITA_SCREEN_FX and MKXP_VITA_GFX_V2")
+    endif()
+    target_compile_definitions(lisa_vita PRIVATE MKXP_VITA_SCREEN_SIZE)
+endif()
+
+# Feature: the standard RPG Maker VX Ace button layout for other games (Cross C, Circle B / Start,
+# Square A, Triangle Z, L / R) instead of LISA's (combo keys). main.cpp.
+option(MKXP_VITA_INPUT_VXACE "Standard VX Ace button layout (not LISA's)" OFF)
+if(MKXP_VITA_INPUT_VXACE)
+    if(NOT MKXP_VITA_INPUT_V3)
+        message(FATAL_ERROR "MKXP_VITA_INPUT_VXACE requires MKXP_VITA_INPUT_V3")
+    endif()
+    set_property(SOURCE src/main.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_INPUT_VXACE)
+endif()
+
+# Feature: MP3 audio (third_party/dr_mp3): BGM/BGS/ME streamed, SE decoded whole. Needs AUDIO.
+option(MKXP_VITA_MP3 "MP3 audio through dr_mp3" OFF)
+if(MKXP_VITA_MP3)
+    if(NOT MKXP_VITA_AUDIO)
+        message(FATAL_ERROR "MKXP_VITA_MP3 requires MKXP_VITA_AUDIO")
+    endif()
+    set_property(SOURCE src/vita-audio-backend.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_MP3)
+endif()
+
+# Fix: Bitmap#clone (Cache hue bitmaps) that finds no memory gives memory back as a failed load does
+# (MKXP_VITA_LOAD_OOM_RETRY: idle textures, clean CPU copies, full GC) and tries once more; a second
+# failure frees the new texture and raises NoMemoryError as before (seen with a 640x480 VX Ace game).
+option(MKXP_VITA_CLONE_OOM_RETRY "Bitmap#clone without memory: give memory back (paging, full GC) and retry once, as a load" OFF)
+if(MKXP_VITA_CLONE_OOM_RETRY)
+    if(NOT MKXP_VITA_LOAD_OOM_RETRY OR NOT MKXP_VITA_CPU_PAGING OR NOT MKXP_VITA_HUE_FAST)
+        message(FATAL_ERROR "MKXP_VITA_CLONE_OOM_RETRY needs MKXP_VITA_LOAD_OOM_RETRY, MKXP_VITA_CPU_PAGING and MKXP_VITA_HUE_FAST")
+    endif()
+    set_property(SOURCE src/bitmap-vita.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_CLONE_OOM_RETRY)
+endif()
+
+# Fix: Ruby's GC knows the memory of the bitmaps the game makes (Bitmap.new(w, h), clone: w*h*4 through
+# rb_gc_adjust_memory_usage) and a major GC starts when that pushes oldmalloc over Ruby's limit, so bitmaps
+# dropped without dispose are freed (Ruby 3's generational GC kept them: a VX Ace game, 47 MiB of CPU
+# copies, then OOM); Bitmap.new without memory gives memory back (full GC) and retries once. bitmap-vita.cpp.
+option(MKXP_VITA_BITMAP_GC "Bitmaps report their memory to Ruby's GC; Bitmap.new without memory retries" OFF)
+if(MKXP_VITA_BITMAP_GC)
+    if(NOT MKXP_VITA_LOAD_OOM_RETRY OR NOT MKXP_VITA_CPU_PAGING)
+        message(FATAL_ERROR "MKXP_VITA_BITMAP_GC needs MKXP_VITA_LOAD_OOM_RETRY and MKXP_VITA_CPU_PAGING")
+    endif()
+    set_property(SOURCE src/bitmap-vita.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_BITMAP_GC)
+endif()
+
+# Fix: game scripts evaluated as UTF-8 source and Encoding.default_external / default_internal = UTF-8,
+# as upstream mkxp-z (binding-mri.cpp). rb_eval_string_protect makes an ASCII-8BIT source: non-ASCII
+# literals become binary (a VX Ace game: regexp /[：:]/ vs UTF-8 notes -> Encoding::CompatibilityError).
+option(MKXP_VITA_SCRIPT_UTF8 "Evaluate game scripts as UTF-8 (as upstream mkxp-z)" OFF)
+if(MKXP_VITA_SCRIPT_UTF8)
+    set_property(SOURCE src/main.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_SCRIPT_UTF8)
 endif()
 
 # Diagnostic only: per-caller accounting of the newlib heap (heap_callers.log, PERF hl_* fields).
@@ -1333,20 +1452,44 @@ vita_create_self(
 # the game patches.
 set(VITA_LIVEAREA_FILES)
 foreach(img icon0.png livearea/contents/bg.png livearea/contents/startup.png)
-    if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/sce_sys/${img})
-        list(APPEND VITA_LIVEAREA_FILES FILE ${CMAKE_CURRENT_SOURCE_DIR}/sce_sys/${img} sce_sys/${img})
+    if(EXISTS ${MKXP_VITA_LIVEAREA_DIR}/${img})
+        list(APPEND VITA_LIVEAREA_FILES FILE ${MKXP_VITA_LIVEAREA_DIR}/${img} sce_sys/${img})
     endif()
 endforeach()
 # Loading screen (MKXP_VITA_QUIET_BOOT): 960x544 PNG, packaged if present.
-if(MKXP_VITA_QUIET_BOOT AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/boot/loading.png)
-    list(APPEND VITA_LIVEAREA_FILES FILE ${CMAKE_CURRENT_SOURCE_DIR}/boot/loading.png boot/loading.png)
+if(MKXP_VITA_QUIET_BOOT AND NOT MKXP_VITA_BOOT_IMAGE STREQUAL "" AND EXISTS ${MKXP_VITA_BOOT_IMAGE})
+    list(APPEND VITA_LIVEAREA_FILES FILE ${MKXP_VITA_BOOT_IMAGE} boot/loading.png)
 endif()
 set(VITA_VPK_FILES
     ${VITA_LIVEAREA_FILES}
     FILE ${CMAKE_CURRENT_SOURCE_DIR}/sce_sys/livearea/contents/template.xml sce_sys/livearea/contents/template.xml)
 if(MKXP_VITA_PATCHES)
+    # index.txt as shipped; the optional patches are appended to a copy in the build folder
+    set(VITA_PATCH_INDEX ${CMAKE_CURRENT_SOURCE_DIR}/patches/index.txt)
+    set(VITA_PATCH_EXTRA "")
+    if(MKXP_VITA_ACHIEVEMENTS)
+        string(APPEND VITA_PATCH_EXTRA "achievements.rb\n")
+        list(APPEND VITA_VPK_FILES FILE ${CMAKE_CURRENT_SOURCE_DIR}/patches/achievements.rb patches/achievements.rb)
+    endif()
+    if(MKXP_VITA_DISPLAY_MENU)
+        string(APPEND VITA_PATCH_EXTRA "display_option.rb\n")
+        list(APPEND VITA_VPK_FILES FILE ${CMAKE_CURRENT_SOURCE_DIR}/patches/display_option.rb patches/display_option.rb)
+    endif()
+    if(MKXP_VITA_WIDE_TEST)
+        string(APPEND VITA_PATCH_EXTRA "widescreen_test.rb\n")
+        list(APPEND VITA_VPK_FILES FILE ${CMAKE_CURRENT_SOURCE_DIR}/patches/widescreen_test.rb patches/widescreen_test.rb)
+    endif()
+    if(MKXP_VITA_SKY_SNAP)
+        string(APPEND VITA_PATCH_EXTRA "sky_snap.rb\n")
+        list(APPEND VITA_VPK_FILES FILE ${CMAKE_CURRENT_SOURCE_DIR}/patches/sky_snap.rb patches/sky_snap.rb)
+    endif()
+    if(NOT VITA_PATCH_EXTRA STREQUAL "")
+        file(READ ${VITA_PATCH_INDEX} VITA_PATCH_INDEX_TEXT)
+        file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/patches-index.txt "${VITA_PATCH_INDEX_TEXT}${VITA_PATCH_EXTRA}")
+        set(VITA_PATCH_INDEX ${CMAKE_CURRENT_BINARY_DIR}/patches-index.txt)
+    endif()
     list(APPEND VITA_VPK_FILES
-        FILE ${CMAKE_CURRENT_SOURCE_DIR}/patches/index.txt patches/index.txt
+        FILE ${VITA_PATCH_INDEX} patches/index.txt
         FILE ${CMAKE_CURRENT_SOURCE_DIR}/patches/ps_buttons.rb patches/ps_buttons.rb
         FILE ${CMAKE_CURRENT_SOURCE_DIR}/patches/ps_buttons_overlay.png patches/ps_buttons_overlay.png)
 endif()

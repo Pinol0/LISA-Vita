@@ -308,7 +308,7 @@ diff --git a/src/audio/soundemitter.cpp b/src/audio/soundemitter.cpp
 diff --git a/src/display/bitmap.h b/src/display/bitmap.h
 --- a/src/display/bitmap.h
 +++ b/src/display/bitmap.h
-@@ -106,6 +106,30 @@ public:
+@@ -106,6 +106,34 @@ public:
  	Bitmap(TEXFBO &other);
  	Bitmap(SDL_Surface *imgSurf, SDL_Surface *imgSurfHires, bool forceMega = false);
  
@@ -335,6 +335,10 @@ diff --git a/src/display/bitmap.h b/src/display/bitmap.h
 +    unsigned int vitaRegionHash(int x, int y, int w, int h) const;
 +    /* Vita (MKXP_VITA_SCREEN_FX): replace the pixels with an RGBA8 image of the same size (snap). */
 +    void vitaSetPixelsRGBA(const unsigned char *rgba, int strideBytes);
++#ifdef MKXP_VITA_SKY_SNAP
++    /* Vita diagnostics (MKXP_VITA_SKY_SNAP): the pixels as an RGBA PNG file. */
++    bool vitaSavePng(const char *path);
++#endif
 +#endif
  	/* Clone constructor */
      
@@ -551,7 +555,15 @@ diff --git a/src/display/gl/quadarray.h b/src/display/gl/quadarray.h
 diff --git a/src/display/gl/shader.cpp b/src/display/gl/shader.cpp
 --- a/src/display/gl/shader.cpp
 +++ b/src/display/gl/shader.cpp
-@@ -315,14 +315,48 @@ void ShaderBase::init()
+@@ -20,6 +20,7 @@
+ */
+ 
+ #include "shader.h"
++#include "vita_screen.h"
+ #include "config.h"
+ #include "graphics.h"
+ #include "sharedstate.h"
+@@ -315,14 +316,48 @@ void ShaderBase::init()
  
  void ShaderBase::applyViewportProj()
  {
@@ -573,8 +585,8 @@ diff --git a/src/display/gl/shader.cpp b/src/display/gl/shader.cpp
 +     */
 +    projMat.set(
 +        Vec2i(
-+            544,
-+            416
++            VITA_SCREEN_W,
++            VITA_SCREEN_H
 +        )
 +    );
 +
@@ -768,7 +780,21 @@ diff --git a/src/display/plane.cpp b/src/display/plane.cpp
  
  #include "sharedstate.h"
  #include "bitmap.h"
-@@ -357,6 +358,13 @@ void Plane::initDynAttribs()
+@@ -262,6 +263,13 @@ void Plane::setBitmap(Bitmap *value)
+ 
+ 	p->bitmap = value;
+ 	p->realBitmap = value;
++#ifdef MKXP_VITA_PLANE_BITMAP
++	/* Vita fix (MKXP_VITA_PLANE_BITMAP): without npot_repeat (vitaGL) the quads tile the bitmap at its
++	 * own size, and they were rebuilt only when ox/oy/zoom changed: a new bitmap of another size with
++	 * the same ox/oy kept the old tiling (LISA intro, map 36: "Pink" 640x525 drawn as the 32x32 tiles
++	 * of the empty parallax shown before it, i.e. its top 32 rows repeated). */
++	p->quadSourceDirty = true;
++#endif
+ 
+ 	p->bitmapDispCon.disconnect();
+ 
+@@ -357,6 +365,13 @@ void Plane::initDynAttribs()
  
  void Plane::draw()
  {
@@ -782,7 +808,7 @@ diff --git a/src/display/plane.cpp b/src/display/plane.cpp
  	if (nullOrDisposed(p->bitmap))
  		return;
  
-@@ -367,7 +375,12 @@ void Plane::draw()
+@@ -367,7 +382,12 @@ void Plane::draw()
  
  	if (p->color->hasEffect() || p->tone->hasEffect() || p->opacity != 255)
  	{
@@ -795,7 +821,7 @@ diff --git a/src/display/plane.cpp b/src/display/plane.cpp
  
  		shader.bind();
  		shader.applyViewportProj();
-@@ -380,7 +393,12 @@ void Plane::draw()
+@@ -380,7 +400,12 @@ void Plane::draw()
  	}
  	else
  	{
@@ -1221,14 +1247,22 @@ diff --git a/src/display/tilemapvx.cpp b/src/display/tilemapvx.cpp
 diff --git a/src/display/viewport.cpp b/src/display/viewport.cpp
 --- a/src/display/viewport.cpp
 +++ b/src/display/viewport.cpp
-@@ -117,8 +117,14 @@ Viewport::Viewport()
+@@ -31,6 +31,7 @@
+ #include <SDL_rect.h>
+ 
+ #include "sigslot/signal.hpp"
++#include "vita_screen.h"
+ 
+ struct ViewportPrivate
+ {
+@@ -117,8 +118,14 @@ Viewport::Viewport()
      : SceneElement(*shState->screen()),
        sceneLink(this)
  {
 +#ifdef MKXP_VITA_PORT
 +	/* Build Vita di test: niente Graphics; risoluzione RGSS3 fissa,
 +	 * come il resto del percorso Vita (FBO scena 544x416). */
-+	initViewport(0, 0, 544, 416);
++	initViewport(0, 0, VITA_SCREEN_W, VITA_SCREEN_H);
 +#else
  	const Graphics &graphics = shState->graphics();
  	initViewport(0, 0, graphics.width(), graphics.height());
@@ -1247,7 +1281,7 @@ diff --git a/src/display/windowvx.cpp b/src/display/windowvx.cpp
  
  #include "bitmap.h"
  #include "etc.h"
-@@ -32,9 +33,23 @@
+@@ -32,9 +33,24 @@
  #include "glstate.h"
  #include "shader.h"
  
@@ -1260,6 +1294,7 @@ diff --git a/src/display/windowvx.cpp b/src/display/windowvx.cpp
 +#include "vita_perf.h"
 +/* Diagnostic only (MKXP_VITA_TIMELINE / MKXP_VITA_PERF_BITMAP): base redraw counter. */
 +#include "vita_diag.h"
++#include "vita_screen.h"
 +
 +/* Vita diagnostic prints of the WindowVX render path (MKXP_VITA_WINDOW_DEBUG_PRINTS, OFF by default).
 + * With the define every WVX_DEBUG_PRINTF is the former psvDebugScreenPrintf call. */
@@ -1271,7 +1306,7 @@ diff --git a/src/display/windowvx.cpp b/src/display/windowvx.cpp
  
  #define DEF_Z         (rgssVer >= 3 ? 100 :   0)
  #define DEF_PADDING   (rgssVer >= 3 ?  12 :  16)
-@@ -459,12 +474,18 @@ struct WindowVXPrivate
+@@ -459,12 +475,18 @@ struct WindowVXPrivate
  			i += TileQuads::buildH(borderSrc.b, sideLen.x,       16, corOff.y, &vert[i*4]);
  		}
  
@@ -1292,7 +1327,7 @@ diff --git a/src/display/windowvx.cpp b/src/display/windowvx.cpp
  			return;
  
  		if (base.tex.tex == TEX::ID(0))
-@@ -472,6 +493,8 @@ struct WindowVXPrivate
+@@ -472,6 +494,8 @@ struct WindowVXPrivate
  
  		FBO::bind(base.tex.fbo);
  
@@ -1301,7 +1336,7 @@ diff --git a/src/display/windowvx.cpp b/src/display/windowvx.cpp
  		/* Clear texture */
  		glState.clearColor.pushSet(Vec4());
  		FBO::clear();
-@@ -482,11 +505,25 @@ struct WindowVXPrivate
+@@ -482,11 +506,25 @@ struct WindowVXPrivate
  
  		ShaderBase *shader;
  
@@ -1328,7 +1363,7 @@ diff --git a/src/display/windowvx.cpp b/src/display/windowvx.cpp
  			planeShader.setColor(Vec4());
  			planeShader.setFlash(Vec4());
  			planeShader.setTone(tone->norm);
-@@ -494,17 +531,24 @@ struct WindowVXPrivate
+@@ -494,17 +532,24 @@ struct WindowVXPrivate
  
  			shader = &planeShader;
  		}
@@ -1359,7 +1394,7 @@ diff --git a/src/display/windowvx.cpp b/src/display/windowvx.cpp
  
  		/* Draw stretched layer */
  		base.vert.draw(0, 1);
-@@ -518,14 +562,20 @@ struct WindowVXPrivate
+@@ -518,14 +563,20 @@ struct WindowVXPrivate
  		glState.blendMode.set(BlendNormal);
  
  		/* If we used plane shader before, switch to simple */
@@ -1388,7 +1423,7 @@ diff --git a/src/display/windowvx.cpp b/src/display/windowvx.cpp
  
  		base.vert.draw(1+base.bgTileQuads, base.borderQuads);
  
-@@ -724,61 +774,117 @@ struct WindowVXPrivate
+@@ -724,61 +775,117 @@ struct WindowVXPrivate
  		}
  	}
  
@@ -1550,7 +1585,7 @@ diff --git a/src/display/windowvx.cpp b/src/display/windowvx.cpp
  	}
  
  	void draw()
-@@ -791,10 +897,20 @@ struct WindowVXPrivate
+@@ -791,10 +898,20 @@ struct WindowVXPrivate
  
  		Vec2i trans = geo.pos() + sceneOffset;
  
@@ -1567,14 +1602,14 @@ diff --git a/src/display/windowvx.cpp b/src/display/windowvx.cpp
 +shader.bind();
 +
 +#ifdef MKXP_VITA_PORT
-+shader.projMat.set(Vec2i(544, 416));
++shader.projMat.set(Vec2i(VITA_SCREEN_W, VITA_SCREEN_H));
 +#else
 +shader.applyViewportProj();
 +#endif
  		if (windowskinValid)
  		{
  			shader.setTranslation(trans);
-@@ -1187,6 +1303,15 @@ void WindowVX::initDynAttribs()
+@@ -1187,6 +1304,15 @@ void WindowVX::initDynAttribs()
  
  void WindowVX::draw()
  {
@@ -1926,3 +1961,32 @@ new file mode 100644
 +#endif
 +
 +#endif /* VITA_PERF_H */
+diff --git a/src/vita_screen.h b/src/vita_screen.h
+new file mode 100644
+--- /dev/null
++++ b/src/vita_screen.h
+@@ -0,0 +1,24 @@
++/*
++ * RGSS screen size of the Vita port. Without MKXP_VITA_SCREEN_SIZE it is the fixed 544x416 of
++ * RPG Maker VX Ace (the macros are the literals, as before). With it, Graphics.resize_screen sets
++ * it (up to 640x480, as RGSS3): the variables are defined in the port's src/shell/sharedstate-vita.cpp.
++ */
++#ifndef VITA_SCREEN_H
++#define VITA_SCREEN_H
++
++#ifdef MKXP_VITA_SCREEN_SIZE
++#ifdef __cplusplus
++extern "C" {
++#endif
++extern int vitaScreenW, vitaScreenH;
++#ifdef __cplusplus
++}
++#endif
++#define VITA_SCREEN_W vitaScreenW
++#define VITA_SCREEN_H vitaScreenH
++#else
++#define VITA_SCREEN_W 544
++#define VITA_SCREEN_H 416
++#endif
++
++#endif

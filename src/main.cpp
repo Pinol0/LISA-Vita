@@ -8,6 +8,9 @@
 #include <psp2/ctrl.h>
 #include <cstring>
 #include <ruby.h>
+#ifdef MKXP_VITA_SCRIPT_UTF8
+#include <ruby/encoding.h>
+#endif
 #include <zlib.h>
 #include <vector>
 #ifdef MKXP_VITA_FREEZE_PROBE
@@ -71,6 +74,9 @@ int _newlib_heap_size_user = MKXP_VITA_HEAP_MB * 1024 * 1024;
 #endif
 extern const char module_rpg3[];
 extern "C" void rb_call_builtin_inits(void);
+#ifndef MKXP_VITA_BOOT_TITLE
+#define MKXP_VITA_BOOT_TITLE "LISA: The Painful"   /* CMake MKXP_VITA_BOOT_TITLE: the game's name */
+#endif
 #ifdef MKXP_VITA_QUIET_BOOT
 #include <cstdarg>
 #include <cstdio>
@@ -162,7 +168,7 @@ static void vitaBootScreenStart()
     PsvDebugScreenFont *big = psvDebugScreenScaleFont2x(small);
     if (big)
         psvDebugScreenSetFont(big);
-    vitaBootCenter("LISA: The Painful", SCREEN_HEIGHT / 2 - 40);
+    vitaBootCenter(MKXP_VITA_BOOT_TITLE, SCREEN_HEIGHT / 2 - 40);
     psvDebugScreenSetFont(small);
     vitaBootCenter("Loading...", SCREEN_HEIGHT / 2 + 10);
 }
@@ -188,7 +194,7 @@ static int vitaBootPrintf(const char *format, ...)
             if (!gVitaBootText)
                 psvDebugScreenInit();   /* the text screen replaces the loading image */
             psvDebugScreenPuts("\e[H\e[2J");
-            psvDebugScreenPuts("LISA: The Painful - boot log\n\n");
+            psvDebugScreenPuts(MKXP_VITA_BOOT_TITLE " - boot log\n\n");
             gVitaBootLog[gVitaBootLen] = 0;
             psvDebugScreenPuts(gVitaBootLog);
         }
@@ -216,6 +222,36 @@ static VALUE vita_trace_print(VALUE self, VALUE message)
 }
 
 }
+
+#ifdef MKXP_VITA_SCRIPT_UTF8
+/*
+ * Game scripts as UTF-8 source, as upstream mkxp-z (newStringUTF8 + Kernel#eval) and RGSS3.
+ * rb_eval_string_protect builds the source with rb_str_new2 (ASCII-8BIT): a literal with non-ASCII
+ * text becomes binary, so /[：:]/ is a class of single bytes and scanning a UTF-8 note raises
+ * Encoding::CompatibilityError (seen in a VX Ace game). Kernel#eval with no binding is what
+ * rb_eval_string runs (eval_string_with_cref): same caller frame, top self, file "eval", line 1.
+ */
+static VALUE vitaScriptEvalBody(VALUE src)
+{
+    static VALUE topSelf = Qundef;
+    if (topSelf == Qundef)
+        topSelf = rb_eval_string("self");
+    VALUE argv[] = {src, Qnil, rb_str_new_cstr("eval"), INT2FIX(1)};
+    return rb_funcallv(topSelf, rb_intern("eval"), 4, argv);
+}
+
+static VALUE vitaScriptEval(const char *src, long len, int *state)
+{
+    return rb_protect(vitaScriptEvalBody, rb_utf8_str_new(src, len), state);
+}
+
+/* After ruby_setup, before any script: Encoding.default_external / default_internal as upstream. */
+static void vitaScriptEncodingInit()
+{
+    rb_enc_set_default_internal(rb_enc_from_encoding(rb_utf8_encoding()));
+    rb_enc_set_default_external(rb_enc_from_encoding(rb_utf8_encoding()));
+}
+#endif
 
 /*
  * TEST VITA: stampa classe, messaggio e backtrace dell'eccezione
@@ -262,12 +298,43 @@ extern "C" { unsigned int vitaLogicUpdates = 0; }   /* PERF upd= (vita_diag.cpp)
 extern "C" void ruby_gc_set_params(void);   /* gc.c (not in the public headers) */
 extern "C" { int vitaGcTuned = 0; }          /* PERF gc_tune= (vita_diag.cpp): 1 = GC_TUNE_L set, 2 = GC_MID */
 #endif
+#ifdef MKXP_VITA_DISPLAY_TOGGLE
+extern "C" void vitaDisplayToggle(void);   /* sharedstate-vita.cpp */
+#endif
+#ifdef MKXP_VITA_DISPLAY_MENU
+extern "C" int vitaDisplayGet(void);       /* sharedstate-vita.cpp: 0 original, 1 stretch, 2 pixel, 3 wide */
+extern "C" void vitaDisplaySet(int mode);
+extern "C" {
+static VALUE vita_display_mode_get(VALUE)
+{
+    return INT2FIX(vitaDisplayGet());
+}
+static VALUE vita_display_mode_set(VALUE, VALUE v)
+{
+    vitaDisplaySet(NUM2INT(v));
+    return v;
+}
+}
+#endif
 extern "C" {
 static VALUE vita_graphics_update(VALUE self)
 {
     (void)self;
 
     VITA_FREEZE_MARK(GRAPHICS_UPDATE_ENTER);
+#if defined(MKXP_VITA_DISPLAY_TOGGLE) && !defined(MKXP_VITA_DISPLAY_MENU)   /* with the menu: no SELECT */
+    {
+        /* SELECT alone (L+R+SELECT is a test combo) switches original proportions <-> whole screen
+         * (sharedstate-vita.cpp, MKXP_VITA_DISPLAY_TOGGLE); edge-triggered. */
+        static bool vitaDispPrev = false;
+        SceCtrlData vitaDispPad;
+        const unsigned kKeys = SCE_CTRL_SELECT | SCE_CTRL_LTRIGGER | SCE_CTRL_RTRIGGER;
+        const bool on = sceCtrlPeekBufferPositive(0, &vitaDispPad, 1) > 0 && (vitaDispPad.buttons & kKeys) == SCE_CTRL_SELECT;
+        if (on && !vitaDispPrev)
+            vitaDisplayToggle();
+        vitaDispPrev = on;
+    }
+#endif
 #ifdef MKXP_VITA_FPS30
     /*
      * MKXP_VITA_FPS30: steady 30 fps with the game logic still at 60 steps per second. RGSS games
@@ -378,6 +445,33 @@ static VALUE vita_fx_freeze(VALUE self) { (void)self; vitaFxFreeze(); return Qni
 static VALUE vita_fx_transition(VALUE self, VALUE prog) { (void)self; vitaFxTransition((float)NUM2DBL(prog)); return Qnil; }
 extern "C" bool vitaFxIsFrozen(void);
 static VALUE vita_fx_frozen_p(VALUE self) { (void)self; return vitaFxIsFrozen() ? Qtrue : Qfalse; }
+#endif
+#ifdef MKXP_VITA_SCREEN_SIZE
+#include "vita_screen.h"
+/* Feature (MKXP_VITA_SCREEN_SIZE): Graphics.resize_screen(w, h), up to 640x480 as RGSS3. The scene
+ * and effect buffers (sharedstate-vita.cpp) follow at the next frame; viewports already created keep
+ * their rect, as in RGSS3. False (size kept) outside 1..640 x 1..480. */
+static VALUE vita_screen_resize(VALUE self, VALUE w, VALUE h)
+{
+    (void)self;
+    const long nw = NUM2LONG(w), nh = NUM2LONG(h);
+#if defined(MKXP_VITA_WIDE_TEST) || defined(MKXP_VITA_DISPLAY_MENU)
+    /* Up to the Vita's 960x544, beyond RGSS3's 640x480: the options menu's widescreen (736x416,
+     * MKXP_VITA_DISPLAY_MENU) and the test build (MKXP_VITA_WIDE_TEST). */
+    if (nw < 1 || nw > 960 || nh < 1 || nh > 544)
+        return Qfalse;
+#else
+    if (nw < 1 || nw > 640 || nh < 1 || nh > 480)
+        return Qfalse;
+#endif
+    vitaScreenW = (int)nw;
+    vitaScreenH = (int)nh;
+    if (FILE *f = fopen(VITA_GAME_ROOT "qa.log", "a")) {
+        fprintf(f, "SCREEN_SIZE %ldx%ld\n", nw, nh);
+        fclose(f);
+    }
+    return Qtrue;
+}
 #endif
 
 static unsigned int vitaInputCurrent = 0;
@@ -504,6 +598,18 @@ static VitaAnalog::State vitaAnalogState;
 static void vitaInputInitBindings()
 {
     using namespace RgssInput;
+#ifdef MKXP_VITA_INPUT_VXACE
+    /* Feature (MKXP_VITA_INPUT_VXACE): the standard RPG Maker VX Ace layout for other games: Cross
+     * confirms (C), Circle cancels / opens the menu (B, also Start), Square = A (Shift: dash), Triangle
+     * = Z, L / R = L / R (pages). No combo keys: the right stick (ANALOG_INPUT) is not bound. */
+    vitaRgssInput.setBindings({
+        { SCE_CTRL_DOWN, Down }, { SCE_CTRL_LEFT, Left }, { SCE_CTRL_RIGHT, Right }, { SCE_CTRL_UP, Up },
+        { SCE_CTRL_CROSS, C }, { SCE_CTRL_CIRCLE, B }, { SCE_CTRL_START, B },
+        { SCE_CTRL_SQUARE, A }, { SCE_CTRL_SQUARE, Shift }, { SCE_CTRL_TRIANGLE, Z },
+        { SCE_CTRL_LTRIGGER, L }, { SCE_CTRL_RTRIGGER, R },
+    });
+    return;
+#endif
     vitaRgssInput.setBindings({
         { SCE_CTRL_DOWN, Down }, { SCE_CTRL_LEFT, Left }, { SCE_CTRL_RIGHT, Right }, { SCE_CTRL_UP, Up },
         { SCE_CTRL_CROSS, C }, { SCE_CTRL_CROSS, Y },          /* confirm / S */
@@ -1366,6 +1472,9 @@ rb_define_global_function(
     }
 
     psvDebugScreenPrintf("Ruby OK\n");
+#ifdef MKXP_VITA_SCRIPT_UTF8
+    vitaScriptEncodingInit();
+#endif
 psvDebugScreenPrintf("Initializing Ruby builtins...\n");
 rb_call_builtin_inits();
 psvDebugScreenPrintf("Ruby builtins OK\n");
@@ -1479,10 +1588,21 @@ rb_eval_string_protect(
     "    end\n"
     "  end\n"
     /* Only the 544x416 RGSS3 screen exists in this renderer: say so instead of silently lying. */
+#ifdef MKXP_VITA_SCREEN_SIZE
+    "  def self.resize_screen(w, h)\n"
+    "    w = w.to_i; h = h.to_i\n"
+    "    if vita_screen_resize(w, h)\n"
+    "      @width = w; @height = h\n"
+    "    else\n"
+    "      $stdout.puts \"[vita] Graphics.resize_screen(#{w}, #{h}) unsupported: up to 640x480\"\n"
+    "    end\n"
+    "  end\n"
+#else
     "  def self.resize_screen(w, h)\n"
     "    return if w.to_i == 544 && h.to_i == 416\n"
     "    $stdout.puts \"[vita] Graphics.resize_screen(#{w}, #{h}) unsupported: only 544x416\"\n"
     "  end\n"
+#endif
     "  def self.play_movie(filename)\n"
     "    $stdout.puts \"[vita] Graphics.play_movie(#{filename}) unsupported: movie skipped\"\n"
     "  end\n"
@@ -3954,6 +4074,11 @@ rb_define_singleton_method(
     RUBY_METHOD_FUNC(vita_graphics_update),
     0
 );
+#ifdef MKXP_VITA_DISPLAY_MENU
+/* Graphics.vita_display_mode / = (patches/display_option.rb: the options menu's "Screen"). */
+rb_define_singleton_method(graphicsModule, "vita_display_mode", RUBY_METHOD_FUNC(vita_display_mode_get), 0);
+rb_define_singleton_method(graphicsModule, "vita_display_mode=", RUBY_METHOD_FUNC(vita_display_mode_set), 1);
+#endif
 
 VALUE inputModule =
     rb_const_get(
@@ -4013,6 +4138,9 @@ vitaDiagRubyInit();
 rb_define_global_function("vita_fx_brightness", RUBY_METHOD_FUNC(vita_fx_brightness), 1);
 rb_define_global_function("vita_fx_freeze", RUBY_METHOD_FUNC(vita_fx_freeze), 0);
 rb_define_global_function("vita_fx_transition", RUBY_METHOD_FUNC(vita_fx_transition), 1);
+#ifdef MKXP_VITA_SCREEN_SIZE
+rb_define_global_function("vita_screen_resize", RUBY_METHOD_FUNC(vita_screen_resize), 2);
+#endif
 rb_define_global_function("vita_fx_frozen?", RUBY_METHOD_FUNC(vita_fx_frozen_p), 0);
 #endif
 #ifdef MKXP_VITA_DEBUG_SOAK
@@ -4209,7 +4337,7 @@ if (lisaState) {
     psvDebugScreenPrintf(
         "\nGame files not found in " VITA_GAME_ROOT "\n"
         "Copy the folders Data, Graphics, Audio and Fonts of your copy of\n"
-        "LISA: The Painful there (extract Game.rgss3a first).\n"
+        MKXP_VITA_BOOT_TITLE " there (extract Game.rgss3a first).\n"
         "See docs/INSTALLATION.md of the LISA-Vita project.\n");
 #endif
 
@@ -4346,10 +4474,14 @@ if (zresult == Z_OK) {
 
     int evalState = 0;
 
+#ifdef MKXP_VITA_SCRIPT_UTF8
+    vitaScriptEval(reinterpret_cast<const char *>(decoded.data()), (long)decodedSize, &evalState);
+#else
     rb_eval_string_protect(
         reinterpret_cast<const char *>(decoded.data()),
         &evalState
     );
+#endif
 
     if (evalState) {
         VALUE exc = rb_errinfo();
@@ -4430,10 +4562,14 @@ if (zresult == Z_OK) {
         VITA_DIAG_MARK("script_eval_begin", vitaDiagScript);
         const uint64_t vitaDiagT0 = vitaDiagNow();
 #endif
+#ifdef MKXP_VITA_SCRIPT_UTF8
+        vitaScriptEval(reinterpret_cast<const char *>(source.data()), (long)sourceSize, &scriptState);
+#else
         rb_eval_string_protect(
             reinterpret_cast<const char *>(source.data()),
             &scriptState
         );
+#endif
 #ifdef MKXP_VITA_DIAG
         vitaDiagSpan(VD_SCRIPT_EVAL, vitaDiagT0, 0, vitaDiagScript);
 #endif

@@ -31,6 +31,7 @@ int sceKernelGetMemBlockBase(SceUID, void **) { return -1; }
 int sceKernelFreeMemBlock(SceUID) { return 0; }
 }
 #define MKXP_VITA_QUIET_BOOT
+#define MKXP_VITA_BOOT_TITLE "LISA: The Painful"   /* main.cpp default (CMake MKXP_VITA_BOOT_TITLE) */
 #include "block.inc"
 static std::string qa() { std::string s; if (FILE *f = fopen(VITA_GAME_ROOT "qa.log", "r")) { char b[4096]; size_t n; while ((n = fread(b, 1, sizeof b, f))) s.append(b, n); fclose(f); } return s; }
 static int fails = 0;

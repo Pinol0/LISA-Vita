@@ -3,7 +3,7 @@
 An unofficial native PS Vita port of **LISA: The Painful**, based on
 mkxp-z and the RGSS3 runtime.
 
-> Current status: **Alpha 1** — playable from start to finish on real hardware.
+> Current status: **Alpha 0.2** — playable from start to finish on real hardware.
 
 > **Works only with the Legacy Edition** of LISA: The Painful (the original RPG Maker VX Ace
 > game: `Game.exe`, `Game.rgss3a`, `Audio/`, `Graphics/`). The Definitive Edition by Serenity
@@ -21,12 +21,28 @@ The game's own scripts run unchanged.
 
 ## Download
 
-Get `LISA-Vita-alpha1.vpk` from the [Releases](../../releases) page and install it
+Get `LISA-Vita-alpha0.2.vpk` from the [Releases](../../releases) page and install it
 with VitaShell. The game files are not included: see [Installation](#installation).
 
 ## Current Status
 
 The game is currently playable on real PS Vita hardware.
+
+### New in Alpha 0.2
+
+- **Screen options**: in the game menu (Circle → *Options/Quit* → *Screen*), choose with left / right:
+  - **1:1** — the game's 544x416 pixels, not scaled, centred;
+  - **Original** — the game's proportions scaled to the screen height (default);
+  - **Stretch** — the same picture stretched to the whole screen (wider pixels);
+  - **Wide** — real widescreen: the game is drawn at 736x416, showing more of each map. LISA was made
+    for 544x416, so some scenes and events may look wrong in this mode.
+
+  The choice is remembered.
+- **Achievements**: the game's 58 Steam achievements are unlocked on the Vita (with their Steam titles
+  and descriptions), shown in a window when you get one and listed under *Achievements* on the title
+  screen. They are kept in `ux0:data/lisa_vita/achievements.dat`; achievements earned with Alpha 1 are
+  picked up automatically.
+- **Fixed**: the sky in some intro scenes was drawn as repeated bands instead of a gradient.
 
 Tested functionality includes:
 
@@ -73,6 +89,10 @@ See the [Installation Guide](docs/INSTALLATION.md) for the details.
 
 In battle, the combo skill descriptions show the PlayStation buttons instead of
 the PC keys.
+
+The "F1 - Options" text on the title screen belongs to the PC version (the RPG Maker
+player's settings window). On the Vita the game's options are in the game menu:
+Circle → *Options/Quit*.
 
 ## Compatibility / Known Issues
 

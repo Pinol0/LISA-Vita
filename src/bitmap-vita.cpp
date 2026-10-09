@@ -36,6 +36,17 @@
 #include <sys/stat.h>
 extern "C" void rb_gc_start(void);   /* Ruby: full GC (the Bitmap is built inside a Ruby call) */
 #endif
+#ifdef MKXP_VITA_BITMAP_GC
+#if !defined(MKXP_VITA_LOAD_OOM_RETRY) || !defined(MKXP_VITA_CPU_PAGING)
+#error "MKXP_VITA_BITMAP_GC needs MKXP_VITA_LOAD_OOM_RETRY and MKXP_VITA_CPU_PAGING"
+#endif
+#include <sys/types.h>
+#include <cstdint>
+extern "C" void rb_gc_adjust_memory_usage(ssize_t diff);   /* Ruby: memory an object holds outside Ruby's heap */
+extern "C" uintptr_t rb_intern(const char *name);        /* ID */
+extern "C" uintptr_t rb_id2sym(uintptr_t id);            /* VALUE */
+extern "C" size_t rb_gc_stat(uintptr_t key);             /* GC.stat(key) */
+#endif
 #if defined(MKXP_VITA_TEX_DIRECT_CACHE) && (!defined(MKXP_VITA_IMG_DISK_CACHE) || !defined(MKXP_VITA_PNG_DIRECT) || !defined(MKXP_VITA_BITMAP_NO_FBO))
 #error "MKXP_VITA_TEX_DIRECT_CACHE needs MKXP_VITA_IMG_DISK_CACHE, MKXP_VITA_PNG_DIRECT and MKXP_VITA_BITMAP_NO_FBO"
 #endif
@@ -124,6 +135,10 @@ struct BitmapPrivate
     /* With fileClean: the pixels are the file at sourcePath after hue_change(cleanHue) (0 = none). */
     int cleanHue = 0;
 #endif
+#ifdef MKXP_VITA_BITMAP_GC
+    /* Bytes reported to Ruby's GC for this bitmap (vitaGcCharge), given back when it goes. */
+    size_t gcCharged = 0;
+#endif
 
     BitmapPrivate()
         : selfHires(nullptr),
@@ -143,9 +158,13 @@ struct BitmapPrivate
 #endif
     }
 
-#if defined(MKXP_VITA_PERF_BITMAP) || defined(MKXP_VITA_TEX_PAGING)
+#if defined(MKXP_VITA_PERF_BITMAP) || defined(MKXP_VITA_TEX_PAGING) || defined(MKXP_VITA_BITMAP_GC)
     ~BitmapPrivate()
     {
+#ifdef MKXP_VITA_BITMAP_GC
+        if (gcCharged)
+            rb_gc_adjust_memory_usage(-(ssize_t)gcCharged);
+#endif
 #ifdef MKXP_VITA_PERF_BITMAP
         if (diagPrev)
             diagPrev->diagNext = diagNext;
@@ -167,6 +186,54 @@ struct BitmapPrivate
 };
 #ifdef MKXP_VITA_TEX_PAGING
 BitmapPrivate *BitmapPrivate::pgHead = nullptr;
+#endif
+#ifdef MKXP_VITA_BITMAP_GC
+/*
+ * Fix (MKXP_VITA_BITMAP_GC): a 640x480 VX Ace game, ~11 min: NoMemoryError for a Bitmap.new at the
+ * start of a battle, with 507 live bitmaps and 47 MiB of CPU copies (179 and 5.5 MiB at the start).
+ * The game drops bitmaps without dispose; Ruby 3's generational GC frees such an object only in a
+ * major GC once it is old, and it starts one when the memory it knows about grows (oldmalloc), which
+ * a Bitmap's pixels are not: 2 major GCs in 11 minutes (after the first, bitmaps 206 -> 170).
+ * RGSS3's Ruby 1.9 had no generations: every GC freed them. Each bitmap made by the game
+ * (Bitmap.new(w, h), clone) now reports w*h*4 bytes to Ruby (rb_gc_adjust_memory_usage, the API for
+ * memory an object holds outside Ruby's heap) and takes them back when it goes; past Ruby's oldmalloc
+ * limit (16 MiB) a major GC frees the dropped ones (host test bitmap-gc: at most ~16 MiB of them).
+ */
+/* host test bitmap-gc: vitaGcReport, as written here (run with a real Ruby 3.1.6) */
+/* Ruby compares oldmalloc with its limit only during a GC, and starts a GC for malloc growth only
+ * inside its own xmalloc: with few Ruby allocations the reported bytes would wait for a GC that does
+ * not come (host test: 700 MiB of dropped bitmaps, 6 GCs). So the check a GC would make is made here,
+ * and a major GC started when it fails (qa.log BITMAP_GC, first 32). */
+static unsigned gBitmapGcRuns = 0;
+static void vitaGcReport(size_t bytes)
+{
+    rb_gc_adjust_memory_usage((ssize_t)bytes);
+    static uintptr_t kInc = 0, kLim = 0;
+    if (!kInc) {
+        kInc = rb_id2sym(rb_intern("oldmalloc_increase_bytes"));
+        kLim = rb_id2sym(rb_intern("oldmalloc_increase_bytes_limit"));
+    }
+    const size_t inc = rb_gc_stat(kInc), lim = rb_gc_stat(kLim);
+    if (inc <= lim)
+        return;
+    rb_gc_start();
+    if (++gBitmapGcRuns <= 32) {
+        FILE *f = std::fopen(VITA_GAME_ROOT "qa.log", "a");
+        if (f) {
+            std::fprintf(f, "BITMAP_GC n=%u oldmalloc_kb=%u limit_kb=%u\n", gBitmapGcRuns, (unsigned)(inc / 1024), (unsigned)(lim / 1024));
+            std::fclose(f);
+        }
+    }
+}
+/* end vitaGcReport */
+static void vitaGcCharge(BitmapPrivate *p, size_t bytes)
+{
+    p->gcCharged += bytes;
+    vitaGcReport(bytes);
+}
+#endif
+#if defined(MKXP_VITA_CLONE_OOM_RETRY) || defined(MKXP_VITA_BITMAP_GC)
+static void vitaOomGiveBack(unsigned &cpu, unsigned &tex);
 #endif
 
 #ifdef MKXP_VITA_PERF_BITMAP
@@ -228,7 +295,38 @@ Bitmap::Bitmap(int width, int height, bool isHires)
         width,
         height
     );
-#ifdef MKXP_VITA_AUDIT_FIXES
+#if defined(MKXP_VITA_BITMAP_GC)
+    /* No memory for the CPU copy: give memory back as a failed load does, then once more; a second
+     * failure frees what was made (the constructor does not finish) and throws as before. */
+    try {
+        p->pixels.resize((size_t)width * height * 4, 0);
+    } catch (const std::bad_alloc &) {
+        unsigned cpu = 0, tex = 0;
+        vitaOomGiveBack(cpu, tex);
+        bool ok = true;
+        try {
+            p->pixels.resize((size_t)width * height * 4, 0);
+        } catch (const std::bad_alloc &) {
+            ok = false;
+        }
+        static int logged = 0;
+        if (logged < 32) {
+            ++logged;
+            FILE *f = std::fopen(VITA_GAME_ROOT "qa.log", "a");
+            if (f) {
+                std::fprintf(f, "NEW_RETRY size=%dx%d ok=%d cpu_dropped=%u tex_evicted=%u\n", width, height, ok ? 1 : 0, cpu, tex);
+                std::fclose(f);
+            }
+        }
+        if (!ok) {
+            shState->texPool().release(p->gl);
+            delete p;
+            p = nullptr;
+            throw;
+        }
+    }
+    vitaGcCharge(p, (size_t)width * height * 4);
+#elif defined(MKXP_VITA_AUDIT_FIXES)
 p->pixels.resize(
     (size_t)width * height * 4,
     0
@@ -1258,6 +1356,57 @@ static bool vitaDecodeSourceRoom(const BitmapPrivate *bp, int &w, int &h, std::v
 #else
 #define VITA_DECODE_SOURCE_ROOM(bp, w, h, px) VITA_DECODE_SOURCE(bp, w, h, px)
 #endif
+#if defined(MKXP_VITA_CLONE_OOM_RETRY) || defined(MKXP_VITA_BITMAP_GC)
+/* What a failed load gives back before its second try (LOAD_OOM_RETRY): every clean CPU copy, the
+ * textures not used in this frame, then a full GC (Bitmaps no longer referenced). */
+static void vitaOomGiveBack(unsigned &cpu, unsigned &tex)
+{
+    cpu = gCpuDropped;
+    vitaCpuRelease(0, (size_t)-1, 1);
+    cpu = gCpuDropped - cpu;
+    tex = vitaPgEvictIdle();
+    rb_gc_start();
+}
+#endif
+#ifdef MKXP_VITA_CLONE_OOM_RETRY
+/*
+ * Fix (MKXP_VITA_CLONE_OOM_RETRY): a 640x480 VX Ace game, at the start of a battle: the clone of
+ * a 960x1152 animation sheet (Cache hue bitmap) found no 4.2 MiB block once the clean CPU copies had
+ * gone (newlib heap 94 of 104 MiB used, 11 MiB free in pieces; big-block pool full): bad_alloc left
+ * the constructor -> NoMemoryError, with no full GC (a failed load does one, LOAD_OOM_RETRY) and the
+ * new texture lost. As a load: idle textures, every clean CPU copy and a full GC (Bitmaps no longer
+ * referenced), then once more; a second bad_alloc is thrown as before. qa.log CLONE_RETRY (first 32).
+ */
+static bool vitaCloneDecode(const BitmapPrivate *src, int &w, int &h, std::vector<unsigned char> &px)
+{
+    try {
+        return VITA_DECODE_SOURCE_ROOM(src, w, h, px);
+    } catch (const std::bad_alloc &) {
+    }
+    std::vector<unsigned char>().swap(px);
+    unsigned cpu = 0, tex = 0;
+    vitaOomGiveBack(cpu, tex);
+    bool ok = false, noMem = false;
+    try {
+        ok = VITA_DECODE_SOURCE(src, w, h, px);
+    } catch (const std::bad_alloc &) {
+        noMem = true;
+    }
+    static int logged = 0;
+    if (logged < 32) {
+        ++logged;
+        FILE *f = std::fopen(VITA_GAME_ROOT "qa.log", "a");
+        if (f) {
+            std::fprintf(f, "CLONE_RETRY path=%s ok=%d cpu_dropped=%u tex_evicted=%u\n", src->sourcePath.c_str(),
+                         ok && !noMem ? 1 : 0, cpu, tex);
+            std::fclose(f);
+        }
+    }
+    if (noMem)
+        throw std::bad_alloc();
+    return ok;
+}
+#endif
 
 void Bitmap::vitaDrawText(
     int x,
@@ -1889,6 +2038,21 @@ void Bitmap::vitaSetPixelsRGBA(const unsigned char *rgba, int strideBytes)
     p->hasCpuPixels = true;
     vitaUploadCpuPixels(p);
 }
+#ifdef MKXP_VITA_SKY_SNAP
+bool Bitmap::vitaSavePng(const char *path)
+{
+    guardDisposed();
+    if (!vitaEnsureCpuPixels(p))
+        return false;
+    png_image im;
+    std::memset(&im, 0, sizeof(im));
+    im.version = PNG_IMAGE_VERSION;
+    im.width = (png_uint_32)p->gl.width;
+    im.height = (png_uint_32)p->gl.height;
+    im.format = PNG_FORMAT_RGBA;
+    return png_image_write_to_file(&im, path, 0, p->pixels.data(), 0, nullptr) != 0;
+}
+#endif
 #endif
 
 #ifdef MKXP_VITA_RGSS_COMPAT
@@ -1923,8 +2087,23 @@ Bitmap::Bitmap(const Bitmap &other, int frame)
 #ifdef MKXP_VITA_DIAG
     const uint64_t vitaDiagT0 = vitaDiagNow();
 #endif
+#ifdef MKXP_VITA_CLONE_OOM_RETRY
+    bool vitaDecoded = false;
+    if (!other.p->hasCpuPixels && !other.p->sourcePath.empty()) {
+        try {
+            vitaDecoded = vitaCloneDecode(other.p, dw, dh, p->pixels) && dw == w && dh == h;
+        } catch (const std::bad_alloc &) {
+            shState->texPool().release(p->gl);   /* the constructor does not finish: nothing else frees them */
+            delete p;
+            p = nullptr;
+            throw;
+        }
+    }
+    if (vitaDecoded) {
+#else
     if (!other.p->hasCpuPixels && !other.p->sourcePath.empty() &&
         VITA_DECODE_SOURCE_ROOM(other.p, dw, dh, p->pixels) && dw == w && dh == h) {
+#endif
 #ifdef MKXP_VITA_DIAG
         vitaDiagSpan(VD_PNG_DECODE, vitaDiagT0, (uint64_t)w * h * 4, "clone");
 #endif
@@ -1945,6 +2124,9 @@ Bitmap::Bitmap(const Bitmap &other, int frame)
         p->fileClean = true;
         p->cleanHue = other.p->cleanHue;
     }
+#endif
+#ifdef MKXP_VITA_BITMAP_GC
+    vitaGcCharge(p, (size_t)w * h * 4);
 #endif
 }
 

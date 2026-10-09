@@ -31,6 +31,14 @@
 #include <malloc.h>
 #define OV_EXCLUDE_STATIC_CALLBACKS
 #include <vorbis/vorbisfile.h>
+#ifdef MKXP_VITA_MP3
+/* Feature (MKXP_VITA_MP3): MP3 through dr_mp3 (third_party/dr_mp3, public domain / MIT-0): BGM/BGS/ME
+ * streamed like WAV, SE decoded whole. dr_mp3 allocates with malloc (C++ blocks >= 128 KiB come from
+ * the big-block pool; its state is ~20 KB). */
+#define DR_MP3_IMPLEMENTATION
+#define DR_MP3_NO_STDIO
+#include "../third_party/dr_mp3/dr_mp3.h"
+#endif
 
 #include <algorithm>
 #include <cstdint>
@@ -395,10 +403,120 @@ struct VitaWavStreamSource : ALDataSource
 
     bool setPitch(float) { return false; }
 };
+#ifdef MKXP_VITA_MP3
+size_t vitaMp3Read(void *ud, void *out, size_t n) { return SDL_RWread(static_cast<SDL_RWops *>(ud), out, 1, n); }
+drmp3_bool32 vitaMp3Seek(void *ud, int offset, drmp3_seek_origin origin)
+{
+    const int whence = origin == DRMP3_SEEK_SET ? RW_SEEK_SET : origin == DRMP3_SEEK_END ? RW_SEEK_END : RW_SEEK_CUR;
+    return SDL_RWseek(static_cast<SDL_RWops *>(ud), offset, whence) >= 0;
+}
+drmp3_bool32 vitaMp3Tell(void *ud, drmp3_int64 *cursor)
+{
+    const Sint64 p = SDL_RWtell(static_cast<SDL_RWops *>(ud));
+    if (p < 0) return DRMP3_FALSE;
+    *cursor = p;
+    return DRMP3_TRUE;
+}
+/* MP3 data: an ID3v2 tag or an MPEG audio frame sync (11 set bits). */
+bool vitaIsMp3(SDL_RWops &ops)
+{
+    unsigned char h[3] = { 0, 0, 0 };
+    const Sint64 at = SDL_RWtell(&ops);
+    const size_t n = SDL_RWread(&ops, h, 1, 3);
+    SDL_RWseek(&ops, at, RW_SEEK_SET);
+    return n == 3 && ((h[0] == 'I' && h[1] == 'D' && h[2] == '3') || (h[0] == 0xFF && (h[1] & 0xE0) == 0xE0));
+}
+
+struct VitaMp3StreamSource : ALDataSource
+{
+    SDL_RWops src;            /* copy of the handler's ops, closed in the destructor */
+    drmp3 mp3;
+    bool looped;
+    ALenum alFormat;
+    size_t chunkFrames;
+    std::vector<int16_t> buf;
+
+    VitaMp3StreamSource(SDL_RWops &ops, uint32_t maxBufSize, bool loop) : src(ops), looped(loop)
+    {
+        if (!drmp3_init(&mp3, vitaMp3Read, vitaMp3Seek, vitaMp3Tell, nullptr, &src, nullptr))
+            throw Exception(Exception::MKXPError, "MP3: cannot read the file");
+        if (mp3.channels < 1 || mp3.channels > 2) {
+            drmp3_uninit(&mp3);
+            throw Exception(Exception::MKXPError, "MP3: more than 2 channels");
+        }
+        alFormat = chooseALFormat(2, (int)mp3.channels);
+        chunkFrames = std::max<size_t>(1152, (maxBufSize ? maxBufSize : 32768) / (2 * mp3.channels));
+        try {
+            buf.resize(chunkFrames * mp3.channels);
+        } catch (...) {
+            drmp3_uninit(&mp3);
+            throw;
+        }
+    }
+
+    ~VitaMp3StreamSource()
+    {
+        drmp3_uninit(&mp3);
+        SDL_RWclose(&src);
+    }
+
+    Status fillBuffer(AL::Buffer::ID alBuffer)
+    {
+        Status st = NoError;
+        drmp3_uint64 got = drmp3_read_pcm_frames_s16(&mp3, chunkFrames, buf.data());
+        if (got == 0) {
+            if (!looped)
+                return EndOfStream;
+            seekToOffset(0);
+            st = WrapAround;
+            got = drmp3_read_pcm_frames_s16(&mp3, chunkFrames, buf.data());
+            if (got == 0)
+                return Error;
+        }
+        AL::Buffer::uploadData(alBuffer, alFormat, buf.data(), (ALsizei)(got * mp3.channels * 2), (ALsizei)mp3.sampleRate);
+        if (got < chunkFrames) {   /* the end of the data */
+            if (looped) {
+                seekToOffset(0);
+                st = WrapAround;
+            } else {
+                st = EndOfStream;
+            }
+        }
+        return st;
+    }
+
+    int sampleRate() { return (int)mp3.sampleRate; }
+
+    /* dr_mp3 skips the encoder delay (LAME tag) only when decoding from frame 0, and counts it in
+     * drmp3_seek_to_pcm_frame: frame f of the audio is f + delay there (host test: 1105 early). */
+    void seekToOffset(double seconds)
+    {
+        const drmp3_uint64 f = seconds <= 0 ? 0 : (drmp3_uint64)(seconds * mp3.sampleRate);
+        drmp3_seek_to_pcm_frame(&mp3, f == 0 ? 0 : f + mp3.delayInPCMFrames);
+    }
+
+    uint32_t loopStartFrames() { return 0; }
+
+    bool setPitch(float) { return false; }
+};
+#endif
 } // namespace
 
 ALDataSource *createSDLSource(SDL_RWops &ops, const char *extension, uint32_t maxBufSize, bool looped)
 {
+#ifdef MKXP_VITA_MP3
+    if (vitaIsMp3(ops)) {
+        try {
+            return new VitaMp3StreamSource(ops, maxBufSize, looped);   /* takes ownership of ops */
+        } catch (const std::bad_alloc &) {
+            SDL_RWclose(&ops);
+            throw Exception(Exception::MKXPError, "%s", vitaOomMessage("opening an MP3 stream").c_str());
+        } catch (...) {
+            SDL_RWclose(&ops);
+            throw;
+        }
+    }
+#endif
     VitaWavInfo wi;
     std::string err;
     if (!vitaParseWav(ops, wi, err)) {
@@ -480,6 +598,43 @@ static bool vitaDecodeAudioAllImpl(SDL_RWops &ops, const char *ext, std::vector<
         return !data.empty() || (err = "Ogg: no samples", false);
     }
 
+#ifdef MKXP_VITA_MP3
+    if (vitaIsMp3(ops)) {
+        drmp3 mp3;
+        if (!drmp3_init(&mp3, vitaMp3Read, vitaMp3Seek, vitaMp3Tell, nullptr, &ops, nullptr)) {
+            SDL_RWclose(&ops);
+            err = "MP3: cannot read the file";
+            return false;
+        }
+        channels = (int)mp3.channels;
+        rate = (int)mp3.sampleRate;
+        sampleSize = 2;
+        if (channels < 1 || channels > 2) {
+            drmp3_uninit(&mp3);
+            SDL_RWclose(&ops);
+            err = "MP3: more than 2 channels";
+            return false;
+        }
+        data.clear();
+        int16_t pcm[1152 * 2 * 4];
+        try {
+            for (;;) {
+                const drmp3_uint64 n = drmp3_read_pcm_frames_s16(&mp3, 1152 * 4, pcm);
+                if (n == 0)
+                    break;
+                const uint8_t *b = reinterpret_cast<const uint8_t *>(pcm);
+                data.insert(data.end(), b, b + n * channels * 2);
+            }
+        } catch (const std::bad_alloc &) {
+            drmp3_uninit(&mp3);
+            SDL_RWclose(&ops);
+            throw;
+        }
+        drmp3_uninit(&mp3);
+        SDL_RWclose(&ops);
+        return !data.empty() || (err = "MP3: no samples", false);
+    }
+#endif
     {
         VitaWavInfo wi;
         if (vitaParseWav(ops, wi, err)) {

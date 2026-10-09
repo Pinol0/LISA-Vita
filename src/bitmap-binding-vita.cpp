@@ -507,8 +507,9 @@ static VALUE vitaFxTransMap(VALUE self, VALUE bmp, VALUE vague)
 }
 #endif
 
-/* sharedstate-vita.cpp: last composited frame (544x416 RGBA8, row 0 = top), after glFinish. */
+/* sharedstate-vita.cpp: last composited frame (screen size RGBA8, row 0 = top), after glFinish. */
 extern "C" bool vitaFxSnapPixels(const unsigned char **px, int *strideBytes);
+#include "vita_screen.h"
 
 /* Graphics.snap_to_bitmap helper: vita_graphics_snap(bitmap) copies the last frame into it. */
 static VALUE vitaGraphicsSnap(VALUE self, VALUE bmp)
@@ -517,7 +518,7 @@ static VALUE vitaGraphicsSnap(VALUE self, VALUE bmp)
     Bitmap *b = getPrivateData<Bitmap>(bmp);
     const unsigned char *px = nullptr;
     int stride = 0;
-    if (b && b->width() == 544 && b->height() == 416 && vitaFxSnapPixels(&px, &stride))
+    if (b && b->width() == VITA_SCREEN_W && b->height() == VITA_SCREEN_H && vitaFxSnapPixels(&px, &stride))
         b->vitaSetPixelsRGBA(px, stride);
     return bmp;
 }
@@ -614,6 +615,18 @@ RB_METHOD_GUARD(bitmapVitaFillRect)
     return self;
 }
 RB_METHOD_GUARD_END
+
+#ifdef MKXP_VITA_SKY_SNAP
+/* Diagnostics (MKXP_VITA_SKY_SNAP): Bitmap#vita_save_png(path) -> true / false. */
+RB_METHOD_GUARD(bitmapVitaSavePng)
+{
+    rb_check_argc(argc, 1);
+    Bitmap *b = getPrivateData<Bitmap>(self);
+    VALUE path = argv[0];
+    return b->vitaSavePng(StringValueCStr(path)) ? Qtrue : Qfalse;
+}
+RB_METHOD_GUARD_END
+#endif
 
 RB_METHOD_GUARD(bitmapVitaGradientFillRect)
 {
@@ -718,6 +731,9 @@ rb_define_method(
     _rb_define_method(klass, "blt", bitmapVitaBlt);
     _rb_define_method(klass, "fill_rect", bitmapVitaFillRect);
     _rb_define_method(klass, "gradient_fill_rect", bitmapVitaGradientFillRect);
+#ifdef MKXP_VITA_SKY_SNAP
+    _rb_define_method(klass, "vita_save_png", bitmapVitaSavePng);
+#endif
     _rb_define_method(klass, "clear_rect", bitmapVitaClearRect);
     _rb_define_method(klass, "clear", bitmapVitaClear);
 #endif
