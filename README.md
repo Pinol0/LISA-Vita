@@ -96,7 +96,7 @@ Circle → *Options/Quit*.
 
 ## Compatibility / Known Issues
 
-This is still an alpha-quality port.
+This is still an alpha quality port but the game is totally playable from start to finish.
 
 Known limitations and performance issues are documented in
 [Known Issues](docs/KNOWN_ISSUES.md).
@@ -111,7 +111,7 @@ running on a map. Significant optimization work has already been done to move
 performance-critical code from Ruby into native code.
 
 Tested with [PSVshell](https://github.com/Electry/PSVshell) at 500/222/222/166 MHz;
-at stock clocks performance is lower.
+at stock clocks performance may be lower.
 
 ## Technical Information
 
