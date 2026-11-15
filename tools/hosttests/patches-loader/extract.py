@@ -6,5 +6,6 @@ seg = seg[seg.index('\n') + 1:seg.index('"  VITA_PATCHES\\n"')]
 out = ''
 for line in seg.split('\n'):
     line = line.strip()
-    if line: out += ast.literal_eval(line.replace('" VITA_GAME_ROOT "', './'))
+    if line and not line.startswith('#'):   # preprocessor lines (#ifdef ...) are not Ruby
+        out += ast.literal_eval(line.replace('" VITA_GAME_ROOT "', './').replace('" VITA_LOG_ROOT "', './'))
 print(out)

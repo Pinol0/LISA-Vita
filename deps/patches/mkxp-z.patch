@@ -800,7 +800,7 @@ diff --git a/src/display/plane.cpp b/src/display/plane.cpp
  {
 +	static bool logged_first_plane = false;
 +	if (!logged_first_plane) {
-+		FILE *f = fopen(VITA_GAME_ROOT "qa.log", "a");
++		FILE *f = fopen(VITA_LOG_ROOT "qa.log", "a");
 +		if (f) { fprintf(f, "FIRST_PLANE_DRAW\n"); fclose(f); }
 +		logged_first_plane = true;
 +	}
@@ -883,7 +883,7 @@ diff --git a/src/display/sprite.cpp b/src/display/sprite.cpp
 +
 +    static bool logged_first_sprite = false;
 +    if (!logged_first_sprite) {
-+        FILE *f = fopen(VITA_GAME_ROOT "qa.log", "a");
++        FILE *f = fopen(VITA_LOG_ROOT "qa.log", "a");
 +        if (f) { fprintf(f, "FIRST_SPRITE_DRAW\n"); fclose(f); }
 +        logged_first_sprite = true;
 +    }
@@ -1157,7 +1157,7 @@ diff --git a/src/display/tilemapvx.cpp b/src/display/tilemapvx.cpp
  	{
 +		static bool logged_first_tilemap = false;
 +		if (!logged_first_tilemap) {
-+			FILE *f = fopen(VITA_GAME_ROOT "qa.log", "a");
++			FILE *f = fopen(VITA_LOG_ROOT "qa.log", "a");
 +			if (f) { fprintf(f, "FIRST_TILEMAP_DRAW\n"); fclose(f); }
 +			logged_first_tilemap = true;
 +		}
@@ -1618,7 +1618,7 @@ diff --git a/src/display/windowvx.cpp b/src/display/windowvx.cpp
 +
 +	static bool logged_first_window = false;
 +	if (!logged_first_window) {
-+		FILE *f = fopen(VITA_GAME_ROOT "qa.log", "a");
++		FILE *f = fopen(VITA_LOG_ROOT "qa.log", "a");
 +		if (f) { fprintf(f, "FIRST_WINDOW_DRAW\n"); fclose(f); }
 +		logged_first_window = true;
 +	}
@@ -1872,7 +1872,7 @@ diff --git a/src/vita_paths.h b/src/vita_paths.h
 new file mode 100644
 --- /dev/null
 +++ b/src/vita_paths.h
-@@ -0,0 +1,14 @@
+@@ -0,0 +1,21 @@
 +/*
 + * Vita: root directory of the game data (Data/, Graphics/, Fonts/, saves, logs). One definition for
 + * the whole port so a future multi-game runtime only has to change it here (or pass
@@ -1885,6 +1885,13 @@ new file mode 100644
 +#define MKXP_VITA_GAME_ROOT "ux0:data/lisa_vita/"
 +#endif
 +#define VITA_GAME_ROOT MKXP_VITA_GAME_ROOT
++/* Logs (qa.log, perf.log, stdout.log, ...): in <game root>logs/ with MKXP_VITA_LOG_DIR (created at boot by
++ * main.cpp), else in the game root as before. Saves, display.cfg and achievements.dat stay in the root. */
++#ifdef MKXP_VITA_LOG_DIR
++#define VITA_LOG_ROOT VITA_GAME_ROOT "logs/"
++#else
++#define VITA_LOG_ROOT VITA_GAME_ROOT
++#endif
 +
 +#endif /* VITA_PATHS_H */
 diff --git a/src/vita_perf.h b/src/vita_perf.h

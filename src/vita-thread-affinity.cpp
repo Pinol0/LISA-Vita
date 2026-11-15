@@ -26,7 +26,7 @@ SceUID __wrap_sceKernelCreateThread(const char *name, SceKernelThreadEntry entry
     const SceUID id = __real_sceKernelCreateThread(name, entry, initPriority, stackSize, attr, mask, option);
     if (vitaAffinityLogged < 64) {
         ++vitaAffinityLogged;
-        FILE *f = std::fopen(VITA_GAME_ROOT "qa.log", "a");
+        FILE *f = std::fopen(VITA_LOG_ROOT "qa.log", "a");
         if (f) {
             std::fprintf(f, "THREAD_CREATE name=%s prio=0x%x stack=%u mask_req=0x%x mask=0x%x uid=0x%x\n", name ? name : "?",
                          (unsigned)initPriority, (unsigned)stackSize, (unsigned)cpuAffinityMask, (unsigned)mask, (unsigned)id);
@@ -40,7 +40,7 @@ SceUID __wrap_sceKernelCreateThread(const char *name, SceKernelThreadEntry entry
 void vitaPinMainThread(void)
 {
     const int r = sceKernelChangeThreadCpuAffinityMask(sceKernelGetThreadId(), SCE_KERNEL_CPU_MASK_USER_0);
-    FILE *f = std::fopen(VITA_GAME_ROOT "qa.log", "a");
+    FILE *f = std::fopen(VITA_LOG_ROOT "qa.log", "a");
     if (f) {
         std::fprintf(f, "MAIN_THREAD core0 result=0x%x\n", (unsigned)r);
         std::fclose(f);

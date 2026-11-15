@@ -4,6 +4,9 @@
 #include "rgss-input.h"
 #endif
 #include "vita_paths.h"
+#ifdef MKXP_VITA_LOG_DIR
+#include <psp2/io/stat.h>   /* sceIoMkdir */
+#endif
 #include <psp2/kernel/threadmgr.h>
 #include <psp2/ctrl.h>
 #include <cstring>
@@ -105,7 +108,7 @@ static void vitaBootLogToQa(const char *why)
     if (gVitaBootLogged)
         return;
     gVitaBootLogged = true;
-    if (FILE *f = fopen(VITA_GAME_ROOT "qa.log", "a")) {
+    if (FILE *f = fopen(VITA_LOG_ROOT "qa.log", "a")) {
         fprintf(f, "BOOT_LOG %s\n%.*sBOOT_LOG end\n", why, (int)gVitaBootLen, gVitaBootLog);
         fclose(f);
     }
@@ -361,7 +364,7 @@ static VALUE vita_graphics_update(VALUE self)
         if (on && !vitaFpsPrev) {
             vitaFps30 = !vitaFps30;
             eglSwapInterval(0, vitaFps30 ? 2 : 1);
-            FILE *f = fopen(VITA_GAME_ROOT "qa.log", "a");
+            FILE *f = fopen(VITA_LOG_ROOT "qa.log", "a");
             if (f) { fprintf(f, "FPS_MODE %d\n", vitaFps30 ? 30 : 60); fclose(f); }
         }
         vitaFpsPrev = on;
@@ -388,7 +391,7 @@ static VALUE vita_graphics_update(VALUE self)
             rb_gv_set("$vita_region_incr", RTEST(cur) ? Qfalse : Qtrue);  /* MKXP_VITA_REGION_INCR (nil if absent) */
             rb_gv_set("$vita_sprite_native", RTEST(cur) ? Qfalse : Qtrue); /* MKXP_VITA_SPRITE_NATIVE */
             rb_gv_set("$vita_map_refresh_fast", RTEST(cur) ? Qfalse : Qtrue); /* MKXP_VITA_MAP_REFRESH_FAST */
-            FILE *f = fopen(VITA_GAME_ROOT "qa.log", "a");
+            FILE *f = fopen(VITA_LOG_ROOT "qa.log", "a");
             if (f) { fprintf(f, "OFFSCREEN_SKIP %s\n", RTEST(cur) ? "OFF" : "ON"); fclose(f); }
         }
         vitaOffPrev = on;
@@ -466,7 +469,7 @@ static VALUE vita_screen_resize(VALUE self, VALUE w, VALUE h)
 #endif
     vitaScreenW = (int)nw;
     vitaScreenH = (int)nh;
-    if (FILE *f = fopen(VITA_GAME_ROOT "qa.log", "a")) {
+    if (FILE *f = fopen(VITA_LOG_ROOT "qa.log", "a")) {
         fprintf(f, "SCREEN_SIZE %ldx%ld\n", nw, nh);
         fclose(f);
     }
@@ -900,7 +903,7 @@ static VALUE vita_gl_ledger_dump_rb(VALUE, VALUE reason)
  */
 extern "C" void rb_vita_comm_pipe_event(const char *what, int fd, int err, int new_rd, int new_wr)
 {
-    FILE *f = fopen(VITA_GAME_ROOT "ruby_pipe.log", "a");
+    FILE *f = fopen(VITA_LOG_ROOT "ruby_pipe.log", "a");
     if (!f)
         return;
     fprintf(f, "COMM_PIPE_REPAIR t_us=%llu op=%s fd=%d errno=%d new=%d,%d\n",
@@ -921,7 +924,7 @@ static void vitaApplyCpuClock(const char *why)
     if (scePowerGetArmClockFrequency() >= 444)
         return;
     const int r = scePowerSetArmClockFrequency(444);
-    FILE *f = fopen(VITA_GAME_ROOT "qa.log", "a");
+    FILE *f = fopen(VITA_LOG_ROOT "qa.log", "a");
     if (f) {
         fprintf(f, "CPU_CLOCK %s set=0x%x arm=%d bus=%d gpu=%d\n", why, (unsigned)r, scePowerGetArmClockFrequency(),
                 scePowerGetBusClockFrequency(), scePowerGetGpuClockFrequency());
@@ -1193,7 +1196,7 @@ static void vitaShowErrorScreen(VALUE exc)
         "  e = $vita_error\n"
         "  msg = e.message.to_s\n"
         "  bt = (e.backtrace || []).first(12)\n"
-        "  File.open('" VITA_GAME_ROOT "qa.log', 'a') do |f|\n"
+        "  File.open('" VITA_LOG_ROOT "qa.log', 'a') do |f|\n"
         "    f.puts \"RUBY_ERROR #{e.class}: #{msg.gsub(\"\\n\", ' ')}\"\n"
         "    bt.each { |l| f.puts \"  @ #{l}\" }\n"
         "  end rescue nil\n"
@@ -1242,7 +1245,7 @@ static void vitaShowErrorScreen(VALUE exc)
         "  end\n"
         "  true\n"
         "rescue Exception => x\n"
-        "  File.open('" VITA_GAME_ROOT "qa.log', 'a') { |f| f.puts \"ERROR_SCREEN_FAILED #{x.class}: #{x.message}\" } rescue nil\n"
+        "  File.open('" VITA_LOG_ROOT "qa.log', 'a') { |f| f.puts \"ERROR_SCREEN_FAILED #{x.class}: #{x.message}\" } rescue nil\n"
         "  false\n"
         "end\n",
         &state);
@@ -1267,6 +1270,10 @@ static void vitaShowErrorScreen(VALUE exc)
 #endif
 int main()
 {
+#ifdef MKXP_VITA_LOG_DIR
+    /* Logs in <game root>logs/ (MKXP_VITA_LOG_DIR): the folder first, before the first log line. */
+    sceIoMkdir(VITA_LOG_ROOT, 0777);
+#endif
 #ifdef MKXP_VITA_CORE0_MAIN
     vitaPinMainThread();
 #endif
@@ -1302,7 +1309,7 @@ int main()
      * the user memory left. */
     {
         const bool vitaBigOk = vitaBigAllocInit(MKXP_VITA_BIG_ALLOC_MB);
-        FILE *f = fopen(VITA_GAME_ROOT "qa.log", "a");
+        FILE *f = fopen(VITA_LOG_ROOT "qa.log", "a");
         if (f) {
             fprintf(f, "BIG_ALLOC_INIT %s size_mb=%d\n", vitaBigOk ? "OK" : "FAILED", MKXP_VITA_BIG_ALLOC_MB);
             fclose(f);
@@ -1438,7 +1445,7 @@ sceCtrlSetSamplingMode(
             ruby_gc_set_params();
             vitaGcTuned = 2;
         }
-        FILE *f = fopen(VITA_GAME_ROOT "qa.log", "a");
+        FILE *f = fopen(VITA_LOG_ROOT "qa.log", "a");
         if (f) {
             fprintf(f, "GC_MID %s\n", vitaGcDefaults ? "OFF (L held: Ruby defaults)" : "ON: init_slots=" VITA_GC_INIT_SLOTS " free_slots=" VITA_GC_FREE_SLOTS " min_ratio=0.25 malloc_limit=32MiB"
 #ifdef MKXP_VITA_GC_MAX_RATIO
@@ -1863,7 +1870,7 @@ rb_eval_string_protect(
     "end\n"
 
 "def rgss_main\n"
-"  File.open('" VITA_GAME_ROOT "qa.log', 'a') { |f| f.puts 'RGSS_MAIN_ENTER' }\n"
+"  File.open('" VITA_LOG_ROOT "qa.log', 'a') { |f| f.puts 'RGSS_MAIN_ENTER' }\n"
 "  vita_dbg('DBG: rgss_main ENTER')\n"
 "\n"
 "  SceneManager.define_singleton_method(:run) do\n"
@@ -1891,7 +1898,7 @@ rb_eval_string_protect(
 "    vita_dbg('DBG: after scene.new')\n"
 "\n"
 "    while SceneManager.instance_variable_get(:@scene)\n"
-"      File.open('" VITA_GAME_ROOT "qa.log', 'a') { |f| f.puts 'GAME_LOOP_ITER' }\n"
+"      File.open('" VITA_LOG_ROOT "qa.log', 'a') { |f| f.puts 'GAME_LOOP_ITER' }\n"
 "      scene = SceneManager.instance_variable_get(:@scene)\n"
 "      vita_dbg('DBG: before scene.main')\n"
 "      scene.main\n"
@@ -1916,7 +1923,7 @@ rb_eval_string_protect(
 
 "  Scene_Title.send(:define_method, :start) do\n"
 "    vita_trace('Scene_Title start')\n"
-"    File.open('" VITA_GAME_ROOT "qa.log', 'a') { |f| f.puts 'SCENE_TITLE_START' }\n"
+"    File.open('" VITA_LOG_ROOT "qa.log', 'a') { |f| f.puts 'SCENE_TITLE_START' }\n"
 "    vita_dbg('TITLE: start ENTER')\n"
 "\n"
 "    vita_dbg('TITLE: before create_main_viewport')\n"
@@ -1967,10 +1974,10 @@ rb_eval_string_protect(
 "    vita_dbg('DBG: after post_start')\n"
 "\n"
 "    vita_dbg('DBG: before first update')\n"
-"    File.open('" VITA_GAME_ROOT "qa.log', 'a') { |f| f.puts 'SCENE_MAP_FIRST_UPDATE' }\n"
+"    File.open('" VITA_LOG_ROOT "qa.log', 'a') { |f| f.puts 'SCENE_MAP_FIRST_UPDATE' }\n"
 "    update\n"
 "    vita_dbg('DBG: FIRST UPDATE OK')\n"
-"    File.open('" VITA_GAME_ROOT "qa.log', 'a') { |f| f.puts 'SCENE_MAP_FIRST_RENDER' }\n"
+"    File.open('" VITA_LOG_ROOT "qa.log', 'a') { |f| f.puts 'SCENE_MAP_FIRST_RENDER' }\n"
 "\n"
 "    update until scene_changing?\n"
 "\n"
@@ -1983,7 +1990,7 @@ rb_eval_string_protect(
 "  Scene_Title.class_eval do\n"
 "    alias vita_trace_command_new_game command_new_game\n"
 "    def command_new_game\n"
-"      File.open('" VITA_GAME_ROOT "qa.log', 'a') { |f| f.puts 'NEW_GAME_ENTER' }\n"
+"      File.open('" VITA_LOG_ROOT "qa.log', 'a') { |f| f.puts 'NEW_GAME_ENTER' }\n"
 "      vita_trace('command_new_game')\n"
 "      vita_trace_command_new_game\n"
 "    end\n"
@@ -1992,8 +1999,8 @@ rb_eval_string_protect(
 "    alias vita_trace_scene_map_start start\n"
 "    def start\n"
 "      vita_trace('Scene_Map start')\n"
-"      File.open('" VITA_GAME_ROOT "qa.log', 'a') { |f| f.puts 'SCENE_MAP_CREATE' }\n"
-"      File.open('" VITA_GAME_ROOT "qa.log', 'a') { |f| f.puts 'SCENE_MAP_START' }\n"
+"      File.open('" VITA_LOG_ROOT "qa.log', 'a') { |f| f.puts 'SCENE_MAP_CREATE' }\n"
+"      File.open('" VITA_LOG_ROOT "qa.log', 'a') { |f| f.puts 'SCENE_MAP_START' }\n"
 "      vita_trace_scene_map_start\n"
 "    end\n"
 "  end\n"
@@ -2024,7 +2031,7 @@ rb_eval_string_protect(
 "    MAP_ID = 41\n"
 "    DONE_SWITCH = 27\n"
 "    def self.log(msg)\n"
-"      File.open('" VITA_GAME_ROOT "qa.log', 'a') { |f| f.puts \"DEBUG_CHECKPOINT #{msg}\" }\n"
+"      File.open('" VITA_LOG_ROOT "qa.log', 'a') { |f| f.puts \"DEBUG_CHECKPOINT #{msg}\" }\n"
 "      vita_trace(\"DEBUG_CHECKPOINT #{msg}\")\n"
 "    end\n"
 "    def self.save\n"
@@ -2418,7 +2425,7 @@ rb_eval_string_protect(
 "        # With the checkpoint in the same build: the map boot only while L is held at startup.\n"
 "        Input.update\n"
 "        unless Input.press?(Input::L)\n"
-"          File.open('" VITA_GAME_ROOT "qa.log', 'a') { |f| f.puts 'DEBUG_BOOT_MAP skipped (L not held): checkpoint path' }\n"
+"          File.open('" VITA_LOG_ROOT "qa.log', 'a') { |f| f.puts 'DEBUG_BOOT_MAP skipped (L not held): checkpoint path' }\n"
 "          return vita_debug_map_first_scene_class\n"
 "        end\n"
 "        # Never let the prologue re-record (overwrite) the existing checkpoint on map 41.\n"
@@ -2429,7 +2436,7 @@ rb_eval_string_protect(
 "      $game_player.moveto($vita_debug_boot_map[1], $vita_debug_boot_map[2])\n"
 "      $game_player.refresh\n"
 "      $game_map.autoplay\n"
-"      File.open('" VITA_GAME_ROOT "qa.log', 'a') { |f| f.puts \"DEBUG_BOOT_MAP map=#{$vita_debug_boot_map.inspect}\" }\n"
+"      File.open('" VITA_LOG_ROOT "qa.log', 'a') { |f| f.puts \"DEBUG_BOOT_MAP map=#{$vita_debug_boot_map.inspect}\" }\n"
 "      Scene_Map\n"
 "    end\n"
 "  end\n"
@@ -2711,7 +2718,7 @@ rb_eval_string_protect(
 "      if $vita_rl_frame == Graphics.frame_count && $vita_rl_key == key\n"
 "        $vita_rl_n += 1\n"
 "        if $vita_rl_n == 8\n"
-"          File.open('" VITA_GAME_ROOT "slow_load.log', 'a') { |f| f.puts \"REPEATED_LOAD frame=#{Graphics.frame_count} path=#{key} scene=#{SceneManager.scene.class} map=#{($game_map.map_id rescue '?')} caller=#{caller(1, 12).join(' | ')}\" } rescue nil\n"
+"          File.open('" VITA_LOG_ROOT "slow_load.log', 'a') { |f| f.puts \"REPEATED_LOAD frame=#{Graphics.frame_count} path=#{key} scene=#{SceneManager.scene.class} map=#{($game_map.map_id rescue '?')} caller=#{caller(1, 12).join(' | ')}\" } rescue nil\n"
 "        end\n"
 "      else\n"
 "        $vita_rl_frame = Graphics.frame_count\n"
@@ -2725,7 +2732,7 @@ rb_eval_string_protect(
 "        $vita_slow_load_in = false\n"
 "        ms = ((Time.now - t0) * 1000).round\n"
 "        if ms >= 300\n"
-"          File.open('" VITA_GAME_ROOT "slow_load.log', 'a') { |f| f.puts \"SLOW_LOAD frame=#{Graphics.frame_count} ms=#{ms} path=#{folder_name}#{filename} hue=#{hue} scene=#{SceneManager.scene.class}\" } rescue nil\n"
+"          File.open('" VITA_LOG_ROOT "slow_load.log', 'a') { |f| f.puts \"SLOW_LOAD frame=#{Graphics.frame_count} ms=#{ms} path=#{folder_name}#{filename} hue=#{hue} scene=#{SceneManager.scene.class}\" } rescue nil\n"
 "        end\n"
 "      end\n"
 "    end\n"
@@ -2742,7 +2749,7 @@ rb_eval_string_protect(
 "    # screen. d79 block profiler: with a write per line (CRUMB_PERSIST, sync) a save made ~67 writes,\n"
 "    # 5-60 ms each on the memory card, 0.3-1.0 s of the ~1-2 s stalls around the save screen.\n"
 "    # A hard crash loses at most the last second of lines.\n"
-"    PATH = '" VITA_GAME_ROOT "breadcrumb.log'\n"
+"    PATH = '" VITA_LOG_ROOT "breadcrumb.log'\n"
 "    @buf = []\n"
 "    @t = 0\n"
 "    def self.log(s)\n"
@@ -2766,7 +2773,7 @@ rb_eval_string_protect(
 "    # the memory card: d60, most of the remaining 0.3 s of the save screen). Reopened after an error\n"
 "    # (e.g. a descriptor lost across standby).\n"
 "    def self.log(s)\n"
-"      @f ||= File.open('" VITA_GAME_ROOT "breadcrumb.log', 'a').tap { |f| f.sync = true }\n"
+"      @f ||= File.open('" VITA_LOG_ROOT "breadcrumb.log', 'a').tap { |f| f.sync = true }\n"
 "      @f.puts \"f=#{Graphics.frame_count} #{s}\"\n"
 "    rescue Exception\n"
 "      (@f.close rescue nil) if @f\n"
@@ -2774,7 +2781,7 @@ rb_eval_string_protect(
 "    end\n"
 #else
 "    def self.log(s)\n"
-"      File.open('" VITA_GAME_ROOT "breadcrumb.log', 'a') { |f| f.puts \"f=#{Graphics.frame_count} #{s}\" }\n"
+"      File.open('" VITA_LOG_ROOT "breadcrumb.log', 'a') { |f| f.puts \"f=#{Graphics.frame_count} #{s}\" }\n"
 "    rescue Exception\n"
 "    end\n"
 #endif
@@ -2897,7 +2904,7 @@ rb_eval_string_protect(
 "    end\n"
 "  end\n"
 "  r = (VitaDisplayMemo.install rescue \"NOT INSTALLED (#{$!.class}: #{$!.message})\")\n"
-"  File.open('" VITA_GAME_ROOT "qa.log', 'a') { |f| f.puts \"DISPLAY_MEMO #{r}\" } rescue nil\n"
+"  File.open('" VITA_LOG_ROOT "qa.log', 'a') { |f| f.puts \"DISPLAY_MEMO #{r}\" } rescue nil\n"
 "  VITA_DISPLAY_MEMO\n"
 #endif
 #ifdef MKXP_VITA_INTERP_HYBRID
@@ -2983,7 +2990,7 @@ rb_eval_string_protect(
 "    end\n"
 "  end\n"
 "  r = (VitaInterpHybrid.install rescue \"NOT INSTALLED (#{$!.class}: #{$!.message})\")\n"
-"  File.open('" VITA_GAME_ROOT "qa.log', 'a') { |f| f.puts \"INTERP_HYBRID #{r}\" } rescue nil\n"
+"  File.open('" VITA_LOG_ROOT "qa.log', 'a') { |f| f.puts \"INTERP_HYBRID #{r}\" } rescue nil\n"
 "  VITA_INTERP_HYBRID\n"
 #endif
 #ifdef MKXP_VITA_ANIM_PREFETCH
@@ -3100,7 +3107,7 @@ rb_eval_string_protect(
 "    end\n"
 "  end\n"
 "  r = (VitaGalvShadow.install rescue \"NOT INSTALLED (#{$!.class}: #{$!.message})\")\n"
-"  File.open('" VITA_GAME_ROOT "qa.log', 'a') { |f| f.puts \"GALV_SHADOW_KEEP #{r}\" } rescue nil\n"
+"  File.open('" VITA_LOG_ROOT "qa.log', 'a') { |f| f.puts \"GALV_SHADOW_KEEP #{r}\" } rescue nil\n"
 "  VITA_GALV_SHADOW\n"
 #endif
 #ifdef MKXP_VITA_SAVE_WRITE_ONCE
@@ -3165,7 +3172,7 @@ rb_eval_string_protect(
 "      end\n"
 "    end\n"
 "    vita_sprite_fast_native_bind(Sprite_Character, Game_CharacterBase, vita_direct)\n"
-"    File.open('" VITA_GAME_ROOT "qa.log', 'a') { |f| f.puts \"SPRITE_FAST_NATIVE direct=#{vita_direct.join(',')}\" } rescue nil\n"
+"    File.open('" VITA_LOG_ROOT "qa.log', 'a') { |f| f.puts \"SPRITE_FAST_NATIVE direct=#{vita_direct.join(',')}\" } rescue nil\n"
 "    Sprite_Character.prepend(VitaOffscreenNative)\n"
 "  else\n"
 "  Sprite_Character.prepend(Module.new do\n"
@@ -3201,7 +3208,7 @@ rb_eval_string_protect(
 #endif
 #ifdef MKXP_VITA_EVENT_FAST
 "  TOPLEVEL_BINDING.eval(<<~'VITA_EVENT_FAST', 'vita_event_fast', 1)\n"
-"  VITA_EVENT_FAST_LOG = '" VITA_GAME_ROOT "qa.log'\n"
+"  VITA_EVENT_FAST_LOG = '" VITA_LOG_ROOT "qa.log'\n"
 "  # PERF FIX (MKXP_VITA_EVENT_FAST): exact fast path of Game_Event#update for still events.\n"
 "  # d41: 151 events on map 11 cost 12.9 ms/frame, 138 of them fixed decorations. For an event that\n"
 "  # is not moving/jumping, not route-forced, move_type 0, not autorun/parallel, no step anime and\n"
@@ -3294,7 +3301,7 @@ rb_eval_string_protect(
 #endif
 #ifdef MKXP_VITA_SPRITE_FAST
 "  TOPLEVEL_BINDING.eval(<<~'VITA_SPRITE_FAST', 'vita_sprite_fast', 1)\n"
-"  VITA_SPRITE_FAST_LOG = '" VITA_GAME_ROOT "qa.log'\n"
+"  VITA_SPRITE_FAST_LOG = '" VITA_LOG_ROOT "qa.log'\n"
 "  # PERF FIX (MKXP_VITA_SPRITE_FAST): exact fast path of Sprite_Character#update for an unchanged\n"
 "  # sprite. d44: on-screen character sprites cost 10-14 ms/frame on the busy maps, almost all still\n"
 "  # decorations. With no animation/balloon running or requested and the same character, graphic,\n"
@@ -3399,7 +3406,7 @@ rb_eval_string_protect(
 #endif
 #ifdef MKXP_VITA_REGION_INCR
 "  TOPLEVEL_BINDING.eval(<<~'VITA_REGION_INCR', 'vita_region_incr', 1)\n"
-"  VITA_REGION_INCR_LOG = '" VITA_GAME_ROOT "qa.log'\n"
+"  VITA_REGION_INCR_LOG = '" VITA_LOG_ROOT "qa.log'\n"
 "  # PERF FIX (MKXP_VITA_REGION_INCR): Galv's Region Effects recreates every region-effect sprite\n"
 "  # (up to 20) at each step on an effect region (refresh_region_effects = dispose all + create all):\n"
 "  # d46, 60-90 ms every 16 frames while walking. Here only the new effect gets a new sprite and the\n"
@@ -3446,7 +3453,7 @@ rb_eval_string_protect(
 #endif
 #ifdef MKXP_VITA_SPRITE_NATIVE
 "  TOPLEVEL_BINDING.eval(<<~'VITA_SPC', 'vita_spc', 1)\n"
-"  VITA_SPC_LOG = '" VITA_GAME_ROOT "qa.log'\n"
+"  VITA_SPC_LOG = '" VITA_LOG_ROOT "qa.log'\n"
 "  # PERF FIX (MKXP_VITA_SPRITE_NATIVE): Sprite_Character#update_position in C (vita-sprite-native.cpp)\n"
 "  # for the character classes whose screen_x/screen_y/screen_z gave exactly the same values as the\n"
 "  # C code in a self-test here (Integer/Float positions, scrolled displays, jumps, priorities,\n"
@@ -3530,7 +3537,7 @@ rb_eval_string_protect(
 #endif
 #ifdef MKXP_VITA_MAP_REFRESH_FAST
 "  TOPLEVEL_BINDING.eval(<<~'VITA_MR', 'vita_map_refresh', 1)\n"
-"  VITA_MR_LOG = '" VITA_GAME_ROOT "qa.log'\n"
+"  VITA_MR_LOG = '" VITA_LOG_ROOT "qa.log'\n"
 "  # PERF FIX (MKXP_VITA_MAP_REFRESH_FAST): exact shortcut of Game_Map#refresh. Writing any switch or\n"
 "  # variable (even the same value) sets need_refresh, and LISA's parallel events write every frame:\n"
 "  # d52, every event recomputed its page every frame (pages.reverse.find + conditions_met?). The\n"
@@ -3615,7 +3622,7 @@ rb_eval_string_protect(
 #endif
 #ifdef MKXP_VITA_SAVE_FAST
 "  TOPLEVEL_BINDING.eval(<<~'VITA_SAVE_FAST', 'vita_save_fast', 1)\n"
-"  VITA_SAVE_LOG = '" VITA_GAME_ROOT "qa.log'\n"
+"  VITA_SAVE_LOG = '" VITA_LOG_ROOT "qa.log'\n"
 "  # PERF FIX (MKXP_VITA_SAVE_FAST): the save/load screen opened in 2-3 s (d45-d48): 16 slots, each\n"
 "  # Window_SaveFile#refresh reads the same header twice (draw_party_characters, draw_playtime) and\n"
 "  # every empty slot raises Errno::ENOENT twice (load_header's `rescue nil`). Here load_header\n"
@@ -3670,7 +3677,7 @@ rb_eval_string_protect(
 #endif
 #ifdef MKXP_VITA_SAVE_PROF
 "  TOPLEVEL_BINDING.eval(<<~'VITA_SAVE_PROF', 'vita_save_prof', 1)\n"
-"  VITA_SAVEPROF_LOG = '" VITA_GAME_ROOT "qa.log'\n"
+"  VITA_SAVEPROF_LOG = '" VITA_LOG_ROOT "qa.log'\n"
 "  # LIGHT DIAGNOSTIC (MKXP_VITA_SAVE_PROF): what the save/load screen costs when it opens. Active\n"
 "  # only during Scene_File#start; one SAVE_SCREEN line in qa.log (wall ms per call site, CPU ms).\n"
 "  $vita_sfp = nil\n"
@@ -3722,7 +3729,7 @@ rb_eval_string_protect(
 #endif
 #ifdef MKXP_VITA_COMBO_FAST
 "  TOPLEVEL_BINDING.eval(<<~'VITA_COMBO', 'vita_combo_fast', 1)\n"
-"  VITA_COMBO_LOG = '" VITA_GAME_ROOT "qa.log'\n"
+"  VITA_COMBO_LOG = '" VITA_LOG_ROOT "qa.log'\n"
 "  # PERF FIX (MKXP_VITA_COMBO_FAST): LISA's input-combo list (Window_ComboSkillList, Yanfly Input\n"
 "  # Combo Skills) is redrawn from scratch at every hp=/mp=/tp= of the actor while it is shown\n"
 "  # (d60: 174 redraws x ~19 ms in a few battles, one dropped frame each). What it draws depends only\n"
@@ -3778,7 +3785,7 @@ rb_eval_string_protect(
 #endif
 #ifdef MKXP_VITA_MOG_CAP
 "  TOPLEVEL_BINDING.eval(<<~'VITA_MOG', 'vita_mog_cap', 1)\n"
-"  VITA_MOG_LOG = '" VITA_GAME_ROOT "qa.log'\n"
+"  VITA_MOG_LOG = '" VITA_LOG_ROOT "qa.log'\n"
 "  # FIX (MKXP_VITA_MOG_CAP): MOG Anti Animation Lag keeps every animation bitmap that finished\n"
 "  # playing (a garbage list) until the scene changes, so it can be reused without reloading. In long\n"
 "  # battles that filled the vitaGL pools (d61: 4.4 MiB sheets, 4-7 MiB free in every pool) and the\n"
@@ -3831,7 +3838,7 @@ rb_eval_string_protect(
 #endif
 #ifdef MKXP_VITA_MAP_PROF
 "  TOPLEVEL_BINDING.eval(<<~'VITA_MAP_PROF', 'vita_map_prof', 1)\n"
-"  VITA_MAPPROF_LOG = '" VITA_GAME_ROOT "qa.log'\n"
+"  VITA_MAPPROF_LOG = '" VITA_LOG_ROOT "qa.log'\n"
 "  # DIAGNOSTIC (MKXP_VITA_MAP_PROF): where a slow map change spends its time (d65: map 74 usually\n"
 "  # ~440 ms, three times 2.2-4.4 s with the CPU idle for more than half of it). Roots: Scene_Map\n"
 "  # #perform_transfer and #start (back from a menu or the save screen). While a root runs, the listed\n"
@@ -3932,7 +3939,7 @@ rb_eval_string_protect(
 #endif
 #ifdef MKXP_VITA_OBJ_HIST
 "  TOPLEVEL_BINDING.eval(<<~'VITA_OBJ_HIST', 'vita_obj_hist', 1)\n"
-"  VITA_OBJHIST_LOG = '" VITA_GAME_ROOT "qa.log'\n"
+"  VITA_OBJHIST_LOG = '" VITA_LOG_ROOT "qa.log'\n"
 "  # DIAGNOSTIC (MKXP_VITA_OBJ_HIST): which objects pile up. d66: Ruby objects alive after full GCs\n"
 "  # grew 288k -> 778k (heap pages 366 -> 951) in steps of 40-180k within a map, then a 4.4 MiB image\n"
 "  # found no room (std::bad_alloc). Every 600 Graphics.update calls: if live slots exceed the last\n"
@@ -4022,7 +4029,10 @@ rb_eval_string_protect(
 "  # only the port's own code and drawings; the player's game files are not changed. Each one is\n"
 "  # isolated: an error is logged (PATCH_FAILED) and the game goes on without it.\n"
 "  VITA_PATCH_DIR = 'app0:patches/'\n"
-"  VITA_PATCH_LOG = '" VITA_GAME_ROOT "qa.log'\n"
+#ifdef MKXP_VITA_LOG_DIR
+"  VITA_GAME_DIR = '" VITA_GAME_ROOT "'   # the game folder (logs are in logs/ under it)\n"
+#endif
+"  VITA_PATCH_LOG = '" VITA_LOG_ROOT "qa.log'\n"
 "  vita_patch_log = ->(line) { File.open(VITA_PATCH_LOG, 'a') { |f| f.puts line } rescue nil }\n"
 "  vita_patch_files =\n"
 "    begin\n"
@@ -4173,7 +4183,7 @@ rb_define_global_function("vita_gl_ledger_dump", RUBY_METHOD_FUNC(vita_gl_ledger
 {
     int vitaStdoutState = 0;
     rb_eval_string_protect(
-        "$stdout = File.open('" VITA_GAME_ROOT "stdout.log', 'a')\n"
+        "$stdout = File.open('" VITA_LOG_ROOT "stdout.log', 'a')\n"
         "$stdout.sync = true\n"
         "$stderr = $stdout\n"
         "$stdout.puts 'STDOUT_REDIRECT boot'\n",
@@ -4750,7 +4760,7 @@ sceClibPrintf("VITA_TRACE about to enter game loop\n");
     if (vitaScriptsRan) {
         if (!NIL_P(vitaFailedExc) && !RTEST(rb_obj_is_kind_of(vitaFailedExc, rb_eSystemExit)))
             vitaShowErrorScreen(vitaFailedExc);
-        FILE *qf = fopen(VITA_GAME_ROOT "qa.log", "a");
+        FILE *qf = fopen(VITA_LOG_ROOT "qa.log", "a");
         if (qf) {
             fprintf(qf, "GAME_END %s\n", NIL_P(vitaFailedExc) ? "scripts_returned"
                                        : RTEST(rb_obj_is_kind_of(vitaFailedExc, rb_eSystemExit)) ? "exit" : "error");

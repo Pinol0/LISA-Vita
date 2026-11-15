@@ -21,6 +21,9 @@ mut swapped "      nxt = direction == :right ?" "      nxt = direction == :left 
 mut not_drawn "      return vita_display_draw_item(index) unless @list[index][:symbol] == :vita_screen" "      return vita_display_draw_item(index)"
 mut no_center "    \$game_player.center(\$game_player.x, \$game_player.y) if \$game_map && \$game_player
 " ""
+mut gameover_left "      @sprite.x = (Graphics.width - b.width) / 2
+" ""
+mut ats_not_moved "        dx == 0 ? x : [[x + dx, Graphics.width - width].min, 0].max" "        x"
 mut no_boot_apply "  VitaDisplayOption.apply_size
   VitaDisplayOption.log(\"installed" "  VitaDisplayOption.log(\"installed"
 rm -rf "$OUT"

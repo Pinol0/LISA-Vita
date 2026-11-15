@@ -414,7 +414,7 @@ void vitaHeapLedgerDump(const char *reason)
     ++gDumps;
     leave();
 
-    FILE *f = std::fopen(VITA_GAME_ROOT "heap_callers.log", "a");
+    FILE *f = std::fopen(VITA_LOG_ROOT "heap_callers.log", "a");
     if (f) {
         std::fwrite(gOut, 1, (size_t)len, f);
         std::fclose(f);

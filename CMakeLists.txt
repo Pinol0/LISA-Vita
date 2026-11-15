@@ -20,10 +20,10 @@ include("${VITASDK}/share/vita.cmake" REQUIRED)
 # boot title MKXP_VITA_BOOT_TITLE, images MKXP_VITA_LIVEAREA_DIR / MKXP_VITA_BOOT_IMAGE).
 set(VITA_APP_NAME "Lisa: The Painful" CACHE STRING "LiveArea title")
 set(VITA_TITLEID "LISA00001" CACHE STRING "Title ID")
-set(VITA_VERSION "00.20" CACHE STRING "App version (XX.YY): 00.20 = alpha 0.2")
+set(VITA_VERSION "00.30" CACHE STRING "App version (XX.YY): 00.30 = alpha 0.3")
 set(MKXP_VITA_BOOT_TITLE "LISA: The Painful" CACHE STRING "Title on the loading screen and in boot messages")
 set(MKXP_VITA_LIVEAREA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/sce_sys" CACHE PATH "icon0.png and livearea/contents/ (packaged if present)")
-set(MKXP_VITA_BOOT_IMAGE "${CMAKE_CURRENT_SOURCE_DIR}/boot/loading.png" CACHE FILEPATH "Loading screen image, 960x544 (empty: text)")
+set(MKXP_VITA_BOOT_IMAGE "" CACHE FILEPATH "Loading screen image, 960x544 (empty: text, the default since alpha 0.3; boot/loading.png is the old picture)")
 if(NOT MKXP_VITA_BOOT_TITLE STREQUAL "LISA: The Painful")   # the default is main.cpp's
     set_property(SOURCE src/main.cpp APPEND PROPERTY COMPILE_DEFINITIONS "MKXP_VITA_BOOT_TITLE=\"${MKXP_VITA_BOOT_TITLE}\"")
 endif()
@@ -836,9 +836,22 @@ if(MKXP_VITA_PATCHES)
     set_property(SOURCE src/main.cpp src/bitmap-vita.cpp APPEND PROPERTY COMPILE_DEFINITIONS MKXP_VITA_PATCHES)
     set(VITA_TAG_DIAG "${VITA_TAG_DIAG} patches=ON")
 endif()
+# Feature: logs (qa.log, perf.log, stdout.log, ...) in <game root>logs/ instead of the game root (VITA_LOG_ROOT,
+# mkxp-z vita_paths.h; the folder is created at boot). Saves, display.cfg, achievements.dat stay in the root.
+option(MKXP_VITA_LOG_DIR "Logs in <game root>logs/" OFF)
+if(MKXP_VITA_LOG_DIR)
+    target_compile_definitions(lisa_vita PRIVATE MKXP_VITA_LOG_DIR)
+endif()
 # Feature (LISA): achievements (patches/achievements.rb): the game's Steam unlocks kept in achievements.dat,
 # a window at each unlock, an "Achievements" list on the title screen. Added to the package's index.
 option(MKXP_VITA_ACHIEVEMENTS "LISA achievements: unlock window, title-screen list, achievements.dat" OFF)
+# Feature (LISA): achievement icons (patches/achievement_icons.rb, after achievements.rb): cut at run time from
+# the player's own Faces / Battlers / Characters / Pictures (names only in the patch); grid list, icon in the
+# unlock window.
+option(MKXP_VITA_ACH_ICONS "LISA achievement icons from the game's own graphics (grid list, unlock window)" OFF)
+if(MKXP_VITA_ACH_ICONS AND NOT MKXP_VITA_ACHIEVEMENTS)
+    message(FATAL_ERROR "MKXP_VITA_ACH_ICONS needs MKXP_VITA_ACHIEVEMENTS")
+endif()
 # Test only: LISA in "true widescreen" (patches/widescreen_test.rb: Graphics.resize_screen(736, 416), 23x13
 # tiles, about the Vita's 16:9), with resize_screen allowed up to 960x544. Needs MKXP_VITA_SCREEN_SIZE.
 option(MKXP_VITA_WIDE_TEST "TEST: LISA drawn at 736x416 (true widescreen experiment)" OFF)
@@ -1470,6 +1483,10 @@ if(MKXP_VITA_PATCHES)
     if(MKXP_VITA_ACHIEVEMENTS)
         string(APPEND VITA_PATCH_EXTRA "achievements.rb\n")
         list(APPEND VITA_VPK_FILES FILE ${CMAKE_CURRENT_SOURCE_DIR}/patches/achievements.rb patches/achievements.rb)
+        if(MKXP_VITA_ACH_ICONS)
+            string(APPEND VITA_PATCH_EXTRA "achievement_icons.rb\n")
+            list(APPEND VITA_VPK_FILES FILE ${CMAKE_CURRENT_SOURCE_DIR}/patches/achievement_icons.rb patches/achievement_icons.rb)
+        endif()
     endif()
     if(MKXP_VITA_DISPLAY_MENU)
         string(APPEND VITA_PATCH_EXTRA "display_option.rb\n")

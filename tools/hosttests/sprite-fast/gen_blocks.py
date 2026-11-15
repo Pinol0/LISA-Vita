@@ -21,5 +21,5 @@ for opt, tag in (('MKXP_VITA_OFFSCREEN_SPRITES', 'VITA_OFFSCREEN'), ('MKXP_VITA_
         if all(stack):
             m = re.match(r'^"(.*)\\n"$', l)
             if m: body.append(m.group(1))
-    out += [l.replace('" VITA_GAME_ROOT "', '/dev/null-').encode().decode('unicode_escape') for l in body[1:-1]]
+    out += [l.replace('" VITA_GAME_ROOT "', '/dev/null-').replace('" VITA_LOG_ROOT "', '/dev/null-').encode().decode('unicode_escape') for l in body[1:-1]]
 open(os.path.join(os.path.dirname(__file__), 'blocks.rb'), 'w').write('\n'.join(out).replace("'/dev/null-qa.log'", "'/dev/null'") + '\n')

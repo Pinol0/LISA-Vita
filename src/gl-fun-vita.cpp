@@ -88,7 +88,7 @@ static void APIENTRY vitaDiagGenFramebuffers(GLsizei n, GLuint *ids)
             char d[48];
             snprintf(d, sizeof(d), "live=%d", vitaDiagFboLive);
             VITA_DIAG_MARK("FBO_GEN_FAILED", d);
-            FILE *f = fopen(VITA_GAME_ROOT "qa.log", "a");
+            FILE *f = fopen(VITA_LOG_ROOT "qa.log", "a");
             if (f) { fprintf(f, "FBO_GEN_FAILED first live=%d\n", vitaDiagFboLive); fclose(f); }
         }
     }
@@ -112,7 +112,7 @@ static void APIENTRY vitaDiagBindFramebuffer(GLenum target, GLuint framebuffer)
         if (vitaDiagFboRtLive > vitaDiagFboRtMax) {
             vitaDiagFboRtMax = vitaDiagFboRtLive;
             if (vitaDiagFboRtMax >= 40) {
-                FILE *f = fopen(VITA_GAME_ROOT "qa.log", "a");
+                FILE *f = fopen(VITA_LOG_ROOT "qa.log", "a");
                 if (f) { fprintf(f, "FBO_RT_LIVE_MAX %d (fbo_live=%d)\n", vitaDiagFboRtMax, vitaDiagFboLive); fclose(f); }
             }
         }
@@ -219,7 +219,7 @@ extern "C" void vitaSceneGpuFlush(void)
         garbage_collector(0, nullptr);
     if (logged < 40) {
         ++logged;
-        FILE *f = std::fopen(VITA_GAME_ROOT "qa.log", "a");
+        FILE *f = std::fopen(VITA_LOG_ROOT "qa.log", "a");
         if (f) {
             std::fprintf(f, "SCENE_FLUSH pending=%u ram_kb=%u->%u vram_kb=%u->%u phycont_kb=%u->%u\n", (unsigned)pending,
                          (unsigned)(ram0 / 1024), (unsigned)(vglMemFree(VGL_MEM_RAM) / 1024), (unsigned)(vram0 / 1024),
@@ -263,7 +263,7 @@ extern "C" void vitaVglLogFlush(void)
     vglAppLogLen = 0;
     pthread_mutex_unlock(&vglAppLogLock);
     if (!n) return;
-    FILE *f = fopen(VITA_GAME_ROOT "vitagl.log", "a");
+    FILE *f = fopen(VITA_LOG_ROOT "vitagl.log", "a");
     if (f) { fwrite(out, 1, (size_t)n, f); fclose(f); }
 }
 #endif
@@ -294,7 +294,7 @@ extern "C" void vgl_app_log(const char *fmt, ...)
                           (unsigned long long)sceKernelGetProcessTimeWide(), line);
         vglAppLogLen += n;
 #else
-        FILE *f = fopen(VITA_GAME_ROOT "vitagl.log", "a");
+        FILE *f = fopen(VITA_LOG_ROOT "vitagl.log", "a");
         if (f) {
             if (vglAppLogRepeats)
                 fprintf(f, "  REPEATED %u more times\n", vglAppLogRepeats);
@@ -380,7 +380,7 @@ void bigLog(const char *line)
     if (gLBigLines >= 400)
         return;
     ++gLBigLines;
-    FILE *f = fopen(VITA_GAME_ROOT "gl_ledger.log", "a");
+    FILE *f = fopen(VITA_LOG_ROOT "gl_ledger.log", "a");
     if (!f)
         return;
     fputs(line, f);
@@ -593,7 +593,7 @@ extern "C" void vitaGlLedgerDump(const char *reason)
     }
     std::sort(bgroups.begin(), bgroups.end(), [](const Group &a, const Group &b) { return a.bytes > b.bytes; });
 
-    FILE *f = fopen(VITA_GAME_ROOT "gl_ledger.log", "a");
+    FILE *f = fopen(VITA_LOG_ROOT "gl_ledger.log", "a");
     if (!f)
         return;
     const struct mallinfo mi = mallinfo();

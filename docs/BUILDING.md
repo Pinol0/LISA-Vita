@@ -10,7 +10,19 @@ cmake -S . -B build -C options/release.cmake
 make -C build -j"$(nproc)"
 ```
 
-The package is `build/lisa_vita.vpk` (published as `LISA-Vita-alpha1.vpk`).
+The package is `build/lisa_vita.vpk` (published as `LISA-Vita-alpha0.3.vpk`).
+
+LISA: The Joyful uses the same code with another title ID, data folder and LiveArea:
+
+```sh
+cmake -S . -B build-joyful -C options/release.cmake \
+  -DVITA_TITLEID=LISJ00001 "-DVITA_APP_NAME=Lisa: The Joyful" "-DMKXP_VITA_BOOT_TITLE=LISA: The Joyful" \
+  -DMKXP_VITA_GAME_ROOT=ux0:data/lisa_joyful/ -DMKXP_VITA_BOOT_IMAGE= \
+  -DMKXP_VITA_LIVEAREA_DIR="$PWD/variants/joyful/sce_sys"
+make -C build-joyful -j"$(nproc)"
+```
+
+(published as `LISA-Joyful-Vita-alpha0.3.vpk`).
 
 `deps/setup.sh` leaves an existing `deps/mkxp-z` or `deps/vitaGL` as it is: after pulling a new
 version of this repository, delete them (and `build/`) so the updated patches are applied.

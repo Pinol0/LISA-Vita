@@ -420,7 +420,7 @@ RGSSThreadData &SharedState::rtData() const
             if (ctx)
                 alcMakeContextCurrent(ctx);
         }
-        FILE *f = fopen(VITA_GAME_ROOT "qa.log", "a");
+        FILE *f = fopen(VITA_LOG_ROOT "qa.log", "a");
         if (f) { fprintf(f, "AUDIO_INIT alc_device=%p\n", (void *)dev); fclose(f); }
         rt = new RGSSThreadData(nullptr, "", nullptr, dev, 60, 1, *testConfig, nullptr);
     }
@@ -557,7 +557,7 @@ static void vitaPerfWritePending()
         return;
 
     VITA_FREEZE_MARK(PERF_WRITE_ENTER);
-    FILE *f = fopen(VITA_GAME_ROOT "perf.log", "a");
+    FILE *f = fopen(VITA_LOG_ROOT "perf.log", "a");
     if (f) {
 #ifdef MKXP_VITA_FREEZE_PROBE
         /* One line per run, before the first summary; PERF lines keep their format. */
@@ -1055,7 +1055,7 @@ extern "C" void vitaDisplaySet(int mode)
         fprintf(f, "%s\n", vitaDisplayNames[vitaDisplayMode]);
         fclose(f);
     }
-    f = fopen(VITA_GAME_ROOT "qa.log", "a");
+    f = fopen(VITA_LOG_ROOT "qa.log", "a");
     if (f) {
         fprintf(f, "DISPLAY_MODE %s\n", vitaDisplayNames[vitaDisplayMode]);
         fclose(f);
@@ -1092,7 +1092,7 @@ static void vitaSbLog(const char *what, GLuint obj, bool program)
         if (program) gl.GetProgramInfoLog(obj, sizeof(info) - 1, &n, info);
         else gl.GetShaderInfoLog(obj, sizeof(info) - 1, &n, info);
     }
-    FILE *f = fopen(VITA_GAME_ROOT "qa.log", "a");
+    FILE *f = fopen(VITA_LOG_ROOT "qa.log", "a");
     if (f) { fprintf(f, "SHARP_BILINEAR %s %s\n", what, info); fclose(f); }
 }
 
@@ -1357,7 +1357,7 @@ void vitaRenderFrame()
     VITA_FRAME_TRACE("before blit");
 
 #ifndef MKXP_VITA_NO_QA_FINAL_BLIT_BEFORE
-    FILE *f_blit = fopen(VITA_GAME_ROOT "qa.log", "a");
+    FILE *f_blit = fopen(VITA_LOG_ROOT "qa.log", "a");
     if (f_blit) { fprintf(f_blit, "FINAL_BLIT_BEFORE\n"); fclose(f_blit); }
 #endif
 
@@ -1385,7 +1385,7 @@ void vitaRenderFrame()
         const bool vitaSelect = sceCtrlPeekBufferPositive(0, &vitaPad, 1) > 0 && (vitaPad.buttons & SCE_CTRL_SELECT);
         if (vitaSelect && !vitaSelectPrev) {
             vitaDelayIdx = (vitaDelayIdx + 1) % 4;
-            FILE *f = fopen(VITA_GAME_ROOT "qa.log", "a");
+            FILE *f = fopen(VITA_LOG_ROOT "qa.log", "a");
             if (f) { fprintf(f, "DELAY_TOGGLE pre_blit_delay_us=%d\n", vitaDelaySteps[vitaDelayIdx]); fclose(f); }
         }
         vitaSelectPrev = vitaSelect;
@@ -1522,7 +1522,7 @@ void vitaRenderFrame()
 #endif
 
 #ifndef MKXP_VITA_NO_QA_FINAL_BLIT_AFTER
-    FILE *f_blit_after = fopen(VITA_GAME_ROOT "qa.log", "a");
+    FILE *f_blit_after = fopen(VITA_LOG_ROOT "qa.log", "a");
     if (f_blit_after) { fprintf(f_blit_after, "FINAL_BLIT_AFTER\n"); fclose(f_blit_after); }
 #endif
 
@@ -1536,7 +1536,7 @@ void vitaRenderFrame()
 #ifndef MKXP_VITA_NO_QA_FRAME
     static unsigned int frameCounter = 0;
     ++frameCounter;
-    FILE *f = fopen(VITA_GAME_ROOT "qa.log", "a");
+    FILE *f = fopen(VITA_LOG_ROOT "qa.log", "a");
     if (f) {
         fprintf(f, "FRAME %u\n", frameCounter);
         fclose(f);
@@ -1544,7 +1544,7 @@ void vitaRenderFrame()
 #endif
 
 #ifndef MKXP_VITA_NO_QA_SWAP_BEFORE
-    FILE *f_swap = fopen(VITA_GAME_ROOT "qa.log", "a");
+    FILE *f_swap = fopen(VITA_LOG_ROOT "qa.log", "a");
     if (f_swap) { fprintf(f_swap, "SWAP_BEFORE\n"); fclose(f_swap); }
 #endif
 
@@ -1577,7 +1577,7 @@ void vitaRenderFrame()
 #endif
 
 #ifndef MKXP_VITA_NO_QA_SWAP_AFTER
-    FILE *f_swap_after = fopen(VITA_GAME_ROOT "qa.log", "a");
+    FILE *f_swap_after = fopen(VITA_LOG_ROOT "qa.log", "a");
     if (f_swap_after) { fprintf(f_swap_after, "SWAP_AFTER\n"); fclose(f_swap_after); }
 #endif
 

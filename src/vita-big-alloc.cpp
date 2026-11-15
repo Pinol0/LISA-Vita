@@ -188,7 +188,7 @@ static void vitaOomLog(std::size_t n, uintptr_t caller)
         "big_used_kb=%u big_free_kb=%u big_blocks=%u big_fallbacks=%u\n",
         total, (unsigned)n, (void *)caller, (void *)&vitaBigAllocStats, (unsigned)sceKernelGetThreadId(),
         (unsigned)(mi.uordblks / 1024), (unsigned)(mi.arena / 1024), (unsigned)(mi.fordblks / 1024), bu, bf, bb, bfb);
-    const SceUID fd = sceIoOpen(VITA_GAME_ROOT "qa.log", SCE_O_WRONLY | SCE_O_CREAT | SCE_O_APPEND, 0666);
+    const SceUID fd = sceIoOpen(VITA_LOG_ROOT "qa.log", SCE_O_WRONLY | SCE_O_CREAT | SCE_O_APPEND, 0666);
     if (fd >= 0) {
         if (len > 0)
             sceIoWrite(fd, buf, (SceSize)std::min<int>(len, (int)sizeof(buf) - 1));

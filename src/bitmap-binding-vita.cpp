@@ -55,7 +55,7 @@ static VALUE vitaBmpLogArm(VALUE self, VALUE n)
 {
     (void)self;
     vitaBmpLogLeft = NUM2INT(n);
-    FILE *f = std::fopen(VITA_GAME_ROOT "qa.log", "a");
+    FILE *f = std::fopen(VITA_LOG_ROOT "qa.log", "a");
     if (f) { std::fprintf(f, "BMPWIN_LOG_ARMED next=%d\n", vitaBmpLogLeft); std::fclose(f); }
     return Qnil;
 }
@@ -66,7 +66,7 @@ static void vitaBmpLog(const char *op, Bitmap *b, int x, int y, int w, int h, co
         return;
     --vitaBmpLogLeft;
     const long frame = NUM2LONG(rb_funcall(rb_const_get(rb_cObject, rb_intern("Graphics")), rb_intern("frame_count"), 0));
-    FILE *f = std::fopen(VITA_GAME_ROOT "qa.log", "a");
+    FILE *f = std::fopen(VITA_LOG_ROOT "qa.log", "a");
     if (!f)
         return;
     std::fprintf(f, "BMPWIN frame=%ld %s bitmap=%p size=%dx%d rect=%d,%d,%d,%d hash=0x%08x%s%s\n",
@@ -254,7 +254,7 @@ static VALUE vitaTextLogArm(VALUE self, VALUE n)
 {
     (void)self;
     vitaTextLogLeft = NUM2INT(n);
-    FILE *f = std::fopen(VITA_GAME_ROOT "qa.log", "a");
+    FILE *f = std::fopen(VITA_LOG_ROOT "qa.log", "a");
     if (f) { std::fprintf(f, "TEXT_LOG_ARMED next=%d\n", vitaTextLogLeft); std::fclose(f); }
     return Qnil;
 }
@@ -270,7 +270,7 @@ static void vitaTextLog(Bitmap *b, int x, int y, int w, int h, const char *text,
     for (const char *c = text; *c && n < sizeof(preview) - 1; ++c)
         preview[n++] = (*c == '"' || (unsigned char)*c < 32) ? '_' : *c;
     preview[n] = 0;
-    FILE *f = std::fopen(VITA_GAME_ROOT "qa.log", "a");
+    FILE *f = std::fopen(VITA_LOG_ROOT "qa.log", "a");
     if (!f)
         return;
     std::fprintf(f, "TEXT %03d bmp=%p %dx%d rect=%d,%d,%d,%d align=%d \"%s\" len=%u "

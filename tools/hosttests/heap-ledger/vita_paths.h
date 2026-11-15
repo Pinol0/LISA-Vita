@@ -1,1 +1,2 @@
 #define VITA_GAME_ROOT "./"
+#define VITA_LOG_ROOT VITA_GAME_ROOT

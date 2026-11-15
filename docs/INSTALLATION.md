@@ -13,8 +13,11 @@
 
 ## Steps
 
-1. Install `LISA-Vita-alpha1.vpk` (from the Releases page, or [build it yourself](BUILDING.md)) with
+1. Install `LISA-Vita-alpha0.3.vpk` (from the Releases page, or [build it yourself](BUILDING.md)) with
    VitaShell. The app is "Lisa: The Painful" (title ID `LISA00001`).
+   Updating from an older alpha: installing over it keeps your saves, but the LiveArea background
+   only changes if you delete the app first and then install the VPK (saves and achievements stay in
+   `ux0:data/lisa_vita/`).
 2. If your copy of the game has a `Game.rgss3a` archive, extract it first: the port needs the plain
    folders. Suggested: [rgss3a-extractor](https://github.com/iatsiuk/rgss3a-extractor)
    (`python3 rgss3a_extractor.py Game.rgss3a`, any system) or, on Windows,
@@ -30,7 +33,15 @@
    └── Fonts/
    ```
 
-4. Start the game from the LiveArea. Saves, logs and caches are written to the same folder.
+4. Start the game from the LiveArea. Saves and caches are written to the same folder, logs to its
+   `logs/` folder.
+
+## LISA: The Joyful (experimental)
+
+Same steps with `LISA-Joyful-Vita-alpha0.3.vpk` ("Lisa: The Joyful", title ID `LISJ00001`) and your
+own copy of LISA: The Joyful (Legacy Edition), copied to `ux0:data/lisa_joyful/`. The two games are
+separate apps with separate saves and can be installed together. The Joyful has been completed on
+hardware, but very long sessions can still run out of memory: save often.
 
 ## First launch
 

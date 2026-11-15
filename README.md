@@ -1,19 +1,32 @@
 # LISA: The Painful — PS Vita Port
 
 An unofficial native PS Vita port of **LISA: The Painful**, based on
-mkxp-z and the RGSS3 runtime.
+mkxp-z and the RGSS3 runtime. **LISA: The Joyful** is supported too, as an experimental
+second package.
 
-> Current status: **Alpha 0.2** — playable from start to finish on real hardware.
+> Current status: **Alpha 0.3** — LISA: The Painful is playable from start to finish on real hardware;
+> LISA: The Joyful has been completed on hardware too (experimental).
 
-> **Works only with the Legacy Edition** of LISA: The Painful (the original RPG Maker VX Ace
-> game: `Game.exe`, `Game.rgss3a`, `Audio/`, `Graphics/`). The Definitive Edition by Serenity
+> **Works only with the Legacy Edition** of LISA: The Painful / The Joyful (the original RPG Maker VX Ace
+> games: `Game.exe`, `Game.rgss3a`, `Audio/`, `Graphics/`). The Definitive Edition by Serenity
 > Forge is built with Unity and is **not** supported.
 
-![Loading screen of the port](boot/loading.png)
+| | |
+|---|---|
+| ![Title screen](docs/images/title.png) | ![Exploration](docs/images/exploration.png) |
+| ![Battle](docs/images/battle.png) | ![Wide screen option](docs/images/screen-wide.png) |
+
+*Screenshots taken on a PS Vita (the last one with the Wide screen option).*
+
+**LISA: The Joyful** (experimental package):
+
+| | | |
+|---|---|---|
+| ![The Joyful: title screen](docs/images/joyful-title.png) | ![The Joyful: exploration](docs/images/joyful-exploration.png) | ![The Joyful: battle](docs/images/joyful-battle.png) |
 
 ## About
 
-This project aims to make LISA: The Painful playable natively on PS Vita.
+This project aims to make LISA: The Painful (and LISA: The Joyful) playable natively on PS Vita.
 
 The port uses mkxp-z as its base, with extensive Vita-specific work for
 rendering, audio, memory management, Ruby/RGSS3 compatibility and performance.
@@ -21,12 +34,26 @@ The game's own scripts run unchanged.
 
 ## Download
 
-Get `LISA-Vita-alpha0.2.vpk` from the [Releases](../../releases) page and install it
-with VitaShell. The game files are not included: see [Installation](#installation).
+Get `LISA-Vita-alpha0.3.vpk` (LISA: The Painful) and, if you want, `LISA-Joyful-Vita-alpha0.3.vpk`
+(LISA: The Joyful, experimental) from the [Releases](../../releases) page and install them with
+VitaShell. The game files are not included: see [Installation](#installation).
 
 ## Current Status
 
 The game is currently playable on real PS Vita hardware.
+
+### New in Alpha 0.3
+
+- **LISA: The Joyful** (experimental): a second package, "Lisa: The Joyful" (title ID `LISJ00001`,
+  data in `ux0:data/lisa_joyful/`), with its own LiveArea and its 10 Steam achievements. The game has
+  been completed on hardware; very long sessions can still run out of memory (save often).
+- **MP3 sounds**: the game's MP3 music and sound effects (for example the TV in Marty's house) are
+  no longer silent.
+- **Wide screen fixes**: the game over picture is centred, and the dialogue boxes shown above a
+  character in small rooms are placed over that character.
+- **Logs** go to a `logs/` folder inside the game folder (`ux0:data/lisa_vita/logs/`).
+- New LiveArea background. To see it when updating from an older alpha, delete the app and install the
+  VPK again: saves and achievements are kept (they live in `ux0:data/`).
 
 ### New in Alpha 0.2
 
@@ -38,6 +65,10 @@ The game is currently playable on real PS Vita hardware.
     for 544x416, so some scenes and events may look wrong in this mode.
 
   The choice is remembered.
+
+  | Original | Wide |
+  |---|---|
+  | ![Original](docs/images/screen-original.png) | ![Wide](docs/images/screen-wide.png) |
 - **Achievements**: the game's 58 Steam achievements are unlocked on the Vita (with their Steam titles
   and descriptions), shown in a window when you get one and listed under *Achievements* on the title
   screen. They are kept in `ux0:data/lisa_vita/achievements.dat`; achievements earned with Alpha 1 are
@@ -69,7 +100,8 @@ version) and provide the required game files yourself:
 1. Install the VPK.
 2. Extract the game's `Game.rgss3a` archive (if your copy has one), for example with
    [rgss3a-extractor](https://github.com/iatsiuk/rgss3a-extractor).
-3. Copy `Data/`, `Graphics/`, `Audio/` and `Fonts/` to `ux0:data/lisa_vita/`.
+3. Copy `Data/`, `Graphics/`, `Audio/` and `Fonts/` to `ux0:data/lisa_vita/` (LISA: The Joyful:
+   `ux0:data/lisa_joyful/`).
 
 The first launch pauses for about 10 seconds while the shaders are compiled;
 later launches are fast.
@@ -138,7 +170,9 @@ with Dingaling Productions, Serenity Forge or the official developers/publishers
 of LISA.
 
 No game files are distributed with this project: you need your own copy of the
-game. The LiveArea and loading screen images are fan artwork based on the game.
+game. The LiveArea backgrounds are cropped from the official Definitive Edition key art
+(© Dingaling Productions / Serenity Forge); the bubble icon of LISA: The Painful is fan
+artwork based on the game.
 
 ## Credits
 

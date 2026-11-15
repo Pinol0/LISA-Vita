@@ -1,0 +1,7 @@
+{
+  "_comment": "LISA: The Joyful LiveArea (build with -DMKXP_VITA_LIVEAREA_DIR=<repo>/variants/joyful/sce_sys). Sources: icon from the game's store icon, bg = Definitive Edition key art cropped above its logo.",
+  "icon0.png": {
+    "shrink": {"scale": 0.84, "anchor": "bottom", "_why": "LISA lettering inside the round bubble"},
+    "fill": [241, 114, 123]
+  }
+}

@@ -10,7 +10,8 @@
 # The entry goes after "Battle Animations" and is changed with left / right like that script's own
 # entries; the script itself is not changed. The mode is the port's (Graphics.vita_display_mode, kept
 # in display.cfg in the game folder); Wide is applied here, before the game starts and when chosen
-# (the camera is centred again on the player). qa.log: DISPLAY_OPTION ...
+# (the camera is centred again on the player). Wide-only fixes for things made for 544x416 follow the
+# menu entry (game over picture, ATS boxes shown on a character in small maps). qa.log: DISPLAY_OPTION ...
 module VitaDisplayOption
   NAME = 'Screen'
   MODES = [2, 0, 1, 3].freeze                    # port modes: pixel, original, stretch, wide
@@ -94,6 +95,62 @@ if VitaDisplayOption.usable?
       update_help
     end
   end
+
+  # Wide only (the screen wider than the picture): the game over picture is 544x416 and the game draws
+  # it at x 0, which left a black band on the right. Centred, with the sides in its edge colour.
+  class Scene_Gameover < Scene_Base
+    alias vita_display_create_background create_background
+    def create_background
+      vita_display_create_background
+      b = @sprite.bitmap
+      return unless b && Graphics.width > b.width
+      @sprite.x = (Graphics.width - b.width) / 2
+      @vita_backdrop = Sprite.new
+      @vita_backdrop.bitmap = Bitmap.new(Graphics.width, Graphics.height)
+      @vita_backdrop.bitmap.fill_rect(@vita_backdrop.bitmap.rect, b.get_pixel(0, 0))
+      @vita_backdrop.z = @sprite.z - 1
+    rescue StandardError => e
+      VitaDisplayOption.log("game over picture: #{e.class}: #{e.message}")
+    end
+
+    alias vita_display_dispose_background dispose_background
+    def dispose_background
+      if @vita_backdrop
+        @vita_backdrop.bitmap.dispose
+        @vita_backdrop.dispose
+        @vita_backdrop = nil
+      end
+      vita_display_dispose_background
+    end
+  end
+
+  # Wide only: Yanfly Core Engine centres a map narrower than the screen by moving the map's viewports
+  # (dx = (Graphics.width - map width) / 2), but ATS places a box shown on a character (\et[n]) from
+  # the character's screen_x, which is relative to those viewports: in Wide a 17-tile room gets dx 96
+  # instead of 0 and every such box sat 96 px left of the speaker. The box moves by what Wide adds to
+  # dx (the dx at 544 px is the game's own, kept as on the PC).
+  module VitaDisplayOption
+    def self.map_dx(screen_w)
+      return 0 unless $game_map && !$game_map.loop_horizontal?
+      [(screen_w - $game_map.width * 32) / 2, 0].max
+    end
+
+    def self.wide_dx
+      Graphics.width > NORMAL[0] ? map_dx(Graphics.width) - map_dx(NORMAL[0]) : 0
+    end
+  end
+
+  if ::Window_Message.method_defined?(:show_on_character_x)
+    class Window_Message < Window_Base
+      alias vita_display_show_on_character_x show_on_character_x
+      def show_on_character_x
+        x = vita_display_show_on_character_x
+        dx = VitaDisplayOption.wide_dx
+        dx == 0 ? x : [[x + dx, Graphics.width - width].min, 0].max
+      end
+    end
+  end
+
   VitaDisplayOption.apply_size
   VitaDisplayOption.log("installed mode=#{Graphics.vita_display_mode} screen=#{Graphics.width}x#{Graphics.height}")
 else

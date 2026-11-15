@@ -9,7 +9,7 @@ import sys, os
 s = open(sys.argv[1]).read()
 i = s.index('/* host test display-toggle: from here to "end display toggle" */')
 j = s.index('/* end display toggle */', i)
-b = '#define VITA_GAME_ROOT "' + sys.argv[2] + '/root/"\n' + s[i:j]
+b = '#define VITA_GAME_ROOT "' + sys.argv[2] + '/root/"\n#define VITA_LOG_ROOT VITA_GAME_ROOT\n' + s[i:j]
 muts = {'ok': b,
         'm1': b.replace('if (f) {\n            char b[16]', 'if (false && f) {\n            char b[16]', 1),
         'm2': b.replace('if (m == VITA_DISPLAY_PIXEL && scrW', 'if (false && scrW', 1),

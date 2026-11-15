@@ -32,7 +32,7 @@
 #define FZ_STALL_US 2000000u
 #define FZ_STILL_US 5000000u           /* first dump at 2 s, one more line at 2 + 3 s */
 #define FZ_MAX_EPISODES 4
-#define FZ_LOG_PATH VITA_GAME_ROOT "freeze.log"
+#define FZ_LOG_PATH VITA_LOG_ROOT "freeze.log"
 
 /* ------------------------------------------------------------------------------------------ */
 /* Shared state                                                                               */

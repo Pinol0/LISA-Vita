@@ -10,7 +10,7 @@ i = s.index('#ifdef MKXP_VITA_QUIET_BOOT\n/*\n * Public builds')
 j = s.index('#define psvDebugScreenPrintf vitaBootPrintf\n#endif', i) + len('#define psvDebugScreenPrintf vitaBootPrintf\n#endif')
 open(sys.argv[2], 'w').write(s[i:j] + '\n')
 PY
-F="-std=gnu++17 -O1 -fsanitize=undefined -fsanitize-trap=all -D_GLIBCXX_ASSERTIONS -DVITA_GAME_ROOT=\"$OUT/\" -I$OUT"
+F="-std=gnu++17 -O1 -fsanitize=undefined -fsanitize-trap=all -D_GLIBCXX_ASSERTIONS -DVITA_GAME_ROOT=\"$OUT/\" -DVITA_LOG_ROOT=VITA_GAME_ROOT -I$OUT"
 g++ $F t_quiet_boot.cpp -lpng -o "$OUT/t"
 "$OUT/t"
 "$OUT/t" late

@@ -35,6 +35,27 @@ class Game_Player < Game_Character; def dash?; false; end; end
 class Scene_Base; end
 class Scene_Battle < Scene_Base; def show_fast?; false; end; def show_normal_animation(*); end; end
 class Scene_MenuBase < Scene_Base; end
+class Bitmap
+  attr_reader :width, :height, :fills
+  def initialize(w, h); @width, @height = w, h; @fills = []; end
+  def rect; Rect.new(0, 0, @width, @height); end
+  def get_pixel(x, y); Color.new(22, 240, 248, 255); end
+  def fill_rect(r, c); @fills << [r.width, r.height, c]; end
+  def dispose; @disposed = true; end
+  def disposed?; @disposed; end
+end
+class Sprite
+  attr_accessor :bitmap, :x, :z
+  def initialize; @x = 0; @z = 0; $sprites = ($sprites || []) << self; end
+  def dispose; @disposed = true; end
+  def disposed?; @disposed; end
+end
+module Cache; def self.system(n); Bitmap.new(544, 416); end; end
+class Scene_Gameover < Scene_Base   # as LISA's 118
+  attr_reader :sprite
+  def create_background; @sprite = Sprite.new; @sprite.bitmap = Cache.system('GameOver'); end
+  def dispose_background; @sprite.bitmap.dispose; @sprite.dispose; end
+end
 class Scene_Menu < Scene_MenuBase; end
 Rect = Struct.new(:x, :y, :width, :height)
 class Contents
@@ -53,7 +74,14 @@ class Window_Base
   def draw_text(*a); r = a[0].is_a?(Rect) ? a[0] : nil; y = r ? r.y : a[1]; @contents.ops << [:text, y, (r ? a[1] : a[4]).to_s, @color[1]]; end
   def draw_gauge(*); end
 end
-class Window_Message < Window_Base; def clear_flags; end; end
+class Window_Message < Window_Base   # with ATS's show_on_character_x (what it returns is set by the test)
+  def initialize; super(0, 0, $ats_w || 300, 72); end
+  def clear_flags; end
+  def show_on_character_x; $ats_x; end
+end
+GameMap = Struct.new(:width, :loop) do
+  def loop_horizontal?; loop; end
+end
 class Window_Help < Window_Base; attr_reader :text; def set_text(t); @text = t; end; end
 class Window_Selectable < Window_Base
   attr_reader :index
@@ -98,7 +126,7 @@ begin
   when 'legacy_stretch'
     check.(lit.(syms.index(:vita_screen)) == ['Stretch'] && boot_resizes.empty?, 'saved Stretch: Stretch lit, no resize')
   else
-    $game_map = true
+    $game_map = GameMap.new(17, false)
     $game_player = Player.new
     check.(log.include?('DISPLAY_OPTION installed mode=0 screen=544x416') && boot_resizes.empty?, 'installed; Original: no resize at load')
     i = syms.index(:vita_screen)
@@ -123,6 +151,26 @@ begin
     check.(Graphics.vita_display_mode == 2 && lit.(i) == ['1:1'] && help.text.start_with?('1:1: '), 'left: 1:1')
     w.cursor_left
     check.($sets == [1, 3, 1, 0, 2] && $cursor_sounds == 5, 'left again: nothing')
+    $sprites = []
+    go = Scene_Gameover.new; go.create_background
+    check.(go.sprite.x == 0 && $sprites.size == 1, 'game over at 544x416: picture untouched')
+    go.dispose_background
+    w.select(i); w.cursor_right; w.cursor_right; w.cursor_right   # 1:1 -> Original -> Stretch -> Wide
+    $sprites = []
+    go = Scene_Gameover.new; go.create_background
+    bd = $sprites.find { |sp| sp != go.sprite }
+    check.(Graphics.width == 736 && go.sprite.x == 96 && bd && bd.z == -1 && bd.bitmap.fills == [[736, 416, Color.new(22, 240, 248, 255)]],
+           "game over in Wide: picture centred (x #{go.sprite.x}), sides in its edge colour")
+    go.dispose_background
+    check.(bd && bd.disposed? && bd.bitmap.disposed? && go.sprite.disposed?, 'game over in Wide: everything disposed')
+    ats = ->(map_w, loop, x, box_w = 300) { $game_map = GameMap.new(map_w, loop); $ats_x = x; $ats_w = box_w; Window_Message.new.show_on_character_x }
+    check.(ats.(17, false, 200) == 296 && ats.(20, false, 200) == 248 && ats.(30, false, 200) == 200 && ats.(17, true, 200) == 200,
+           "Wide: a box on a character moves by Wide's extra centring (17 tiles +96, 20 tiles +48, 30 tiles / looping +0)")
+    check.(ats.(17, false, 400) == 436, 'Wide: the box stays on screen (right edge)')
+    $game_map = GameMap.new(17, false)
+    w.cursor_left; w.cursor_left; w.cursor_left                   # back to 1:1 for the checks below
+    check.(ats.(17, false, 200) == 200, 'not Wide (544 px): the box where ATS puts it')
+    $game_map = GameMap.new(17, false)
     a = syms.index(:animations); w.select(a)
     before = $game_system.animations?
     w.cursor_left

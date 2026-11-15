@@ -1,4 +1,4 @@
-# Achievements for LISA: The Painful (MKXP_VITA_ACHIEVEMENTS).
+# Achievements for LISA: The Painful and LISA: The Joyful (MKXP_VITA_ACHIEVEMENTS).
 #
 # The game unlocks its achievements through Steam: events call Steam::Stats.unlock(:symbol), its script
 # maps the symbol to a Steam id (TO_API_ID) and calls setAchievement / getAchievementStatus /
@@ -9,14 +9,16 @@
 #    from earlier sessions arrive the same way: the game pushes them again every 60 frames);
 #  - the title screen gets an "Achievements" command: count, list, descriptions.
 # The game's own logic (when, which one, never twice) is unchanged. Titles and descriptions are
-# Steam's (store page of LISA, app 335670), matched to the ids by Steam's global unlock percentages.
+# Steam's (store page of LISA, app 335670: 58 achievements of The Painful, 10 of The Joyful), matched
+# to the ids by Steam's global unlock percentages; each game lists the ones of its own TO_API_ID.
 # An error while unlocking or showing the unlock window is logged (ACHIEVEMENTS ...) and does not stop
 # the game; the list scene is ordinary game UI (d104: Time#strftime raised there on the Vita).
 module VitaAchievements
-  ROOT = File.dirname(VITA_PATCH_LOG) + '/'
+  ROOT = defined?(VITA_GAME_DIR) ? VITA_GAME_DIR : File.dirname(VITA_PATCH_LOG) + '/'   # not logs/
   FILE = ROOT + 'achievements.dat'
   SHOW_FRAMES = 180
   # Steam id => [title, description] ('' = hidden on Steam), in Steam's order (most unlocked first).
+  # All 68 of the Steam app; ids() keeps the running game's.
   INFO = {
     'ACH_TERRY' => ["Hint Guy", "Recruit Terry Hints."],
     'ACH_AREA_1' => ["Let's Find Her", "Reach the first crossroads."],
@@ -52,6 +54,7 @@ module VitaAchievements
     'ACH_FISHCAVE' => ["There's Something Fishy...", "Find the Fishmen."],
     'ACH_HARVEY' => ["Lawyer Fish Guy", "Recruit Harvey Alibastor."],
     'ACH_CRISP' => ["Many Swords Guy", "Recruit Crisp Ladaddy."],
+    'ACH_RANDO_MASK' => ["Rando", ""],
     'ACH_RT' => ["Dirt Bag Guy", "Recruit RT."],
     'ACH_GEESE' => ["Rhyming Bird Guy", "Recruit Geese Thompson."],
     'ACH_SHOCKLORD' => ["Face First Guy", "Recruit Shocklord."],
@@ -64,18 +67,27 @@ module VitaAchievements
     'ACH_SONNY' => ["Powerful Clothesline Guy", "Recruit Sonny Backluwitz."],
     'ACH_CARP' => ["Fish Guy", "Recruit Carp."],
     'ACH_HOTEL_SECRET' => ["Weekend Getaway", "Find the relaxing researchers."],
+    'ACH_HINT_MASK' => ["Fan Club", ""],
     'ACH_JOYFULL_END' => ["Joyful End", ""],
     'ACH_ONE_ARMS' => ["Kind of Selfish", ""],
     'ACH_MIKE' => ["10-4 Good Buddy", "Kill Satan."],
     'ACH_JOYLESS_END' => ["Joyless End", ""],
     'ACH_CLINT' => ["Cool Dude Guy", "Recruit Clint Olympic."],
+    'ACH_YADO' => ["Yado", ""],
     'ACH_NO_ARMS' => ["Selfless", ""],
     'ACH_ROULETTE' => ["I Love You Son", "Kill all the Rouletters."],
     'ACH_BUCKETS' => ["Mysterious Guy", "Recruit Buckets."],
+    'ACH_JOY_MASK' => ["Joy", ""],
     'ACH_TWO_ARMS' => ["Selfish", ""],
     'ACH_PAIN_MODE' => ["Sorry Master", "The birth of Red Skull."],
+    'ACH_W2D' => ["The Beat Never Dies", ""],
+    'ACH_BUZZO_DONE' => ["The Source", ""],
     'ACH_CREED' => ["Worth It", "Learn the ways of the Bob Friday."],
     'ACH_HORNMAN' => ["...", "..."],
+    'ACH_LISA' => ["Lisa", ""],
+    'ACH_BRAD' => ["I'm Sorry", ""],
+    'ACH_MARTY' => ["Father", ""],
+    'ACH_GREEN' => ["No Friends", ""],
   }.freeze
 
   @unlocked = {}   # Steam id => unix time
@@ -83,6 +95,7 @@ module VitaAchievements
   @window = nil
   @timer = 0
   @tick_failed = false
+  @unknown = {}   # ids already logged as unknown (The Joyful's maps keep events of The Painful)
 
   def self.log(line)
     File.open(VITA_PATCH_LOG, 'a') { |f| f.puts "ACHIEVEMENTS #{line}" }
@@ -134,8 +147,9 @@ module VitaAchievements
   def self.unlock(id)
     id = id.to_s
     return true if @unlocked.key?(id)
-    unless INFO.key?(id)
-      log("unknown id #{id}")
+    unless INFO.key?(id) && ::TO_API_ID.value?(id)
+      log("unknown id #{id.inspect}") unless @unknown[id]   # once: the game pushes it again every 60 frames
+      @unknown[id] = true
       return false
     end
     t = Time.now.to_i

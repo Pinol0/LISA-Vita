@@ -218,7 +218,7 @@ static void vitaGcReport(size_t bytes)
         return;
     rb_gc_start();
     if (++gBitmapGcRuns <= 32) {
-        FILE *f = std::fopen(VITA_GAME_ROOT "qa.log", "a");
+        FILE *f = std::fopen(VITA_LOG_ROOT "qa.log", "a");
         if (f) {
             std::fprintf(f, "BITMAP_GC n=%u oldmalloc_kb=%u limit_kb=%u\n", gBitmapGcRuns, (unsigned)(inc / 1024), (unsigned)(lim / 1024));
             std::fclose(f);
@@ -312,7 +312,7 @@ Bitmap::Bitmap(int width, int height, bool isHires)
         static int logged = 0;
         if (logged < 32) {
             ++logged;
-            FILE *f = std::fopen(VITA_GAME_ROOT "qa.log", "a");
+            FILE *f = std::fopen(VITA_LOG_ROOT "qa.log", "a");
             if (f) {
                 std::fprintf(f, "NEW_RETRY size=%dx%d ok=%d cpu_dropped=%u tex_evicted=%u\n", width, height, ok ? 1 : 0, cpu, tex);
                 std::fclose(f);
@@ -900,7 +900,7 @@ extern "C" void vitaTexPagingTick()
 #endif
         if (on && !gPgStressPrev) {
             gPgStress = !gPgStress;
-            FILE *f = std::fopen(VITA_GAME_ROOT "qa.log", "a");
+            FILE *f = std::fopen(VITA_LOG_ROOT "qa.log", "a");
             if (f) {
                 std::fprintf(f, "TEX_PAGING_STRESS %s\n", gPgStress ? "ON" : "OFF");
                 std::fclose(f);
@@ -945,7 +945,7 @@ extern "C" void vitaTexPagingTick()
         ++n;
     }
     if (n && gPgRounds++ < (gPgStress ? 400u : 40u)) {
-        FILE *f = std::fopen(VITA_GAME_ROOT "qa.log", "a");
+        FILE *f = std::fopen(VITA_LOG_ROOT "qa.log", "a");
         if (f) {
             std::fprintf(f, "TEX_PAGING evicted=%u kb=%u free_kb_before=%u candidates=%u out_total_kb=%u\n", n,
                          (unsigned)(got / 1024), (unsigned)(freeB / 1024), (unsigned)c.size(), (unsigned)(gPgOutBytes / 1024));
@@ -1083,7 +1083,7 @@ Bitmap::Bitmap(const char *filename)
             static int logged = 0;
             if (logged < 32) {
                 ++logged;
-                FILE *f = std::fopen(VITA_GAME_ROOT "qa.log", "a");
+                FILE *f = std::fopen(VITA_LOG_ROOT "qa.log", "a");
                 if (f) {
                     std::fprintf(f, "LOAD_RETRY path=%s ok=%d cpu_dropped=%u tex_evicted=%u\n", relativePath.c_str(),
                                  loaded ? 1 : 0, cpu, tex);
@@ -1395,7 +1395,7 @@ static bool vitaCloneDecode(const BitmapPrivate *src, int &w, int &h, std::vecto
     static int logged = 0;
     if (logged < 32) {
         ++logged;
-        FILE *f = std::fopen(VITA_GAME_ROOT "qa.log", "a");
+        FILE *f = std::fopen(VITA_LOG_ROOT "qa.log", "a");
         if (f) {
             std::fprintf(f, "CLONE_RETRY path=%s ok=%d cpu_dropped=%u tex_evicted=%u\n", src->sourcePath.c_str(),
                          ok && !noMem ? 1 : 0, cpu, tex);
@@ -1739,7 +1739,7 @@ static void vitaBitmapDebug(const char *op, const Bitmap *b, const std::vector<u
         }
     }
 
-    FILE *f = std::fopen(VITA_GAME_ROOT "qa.log", "a");
+    FILE *f = std::fopen(VITA_LOG_ROOT "qa.log", "a");
     if (f) {
         std::fprintf(f, "BITMAP_OP %s bitmap=%p size=%dx%d %s result_fnv=0x%08x dump=%s\n",
                      op, (const void *)b, w, h, detail, (unsigned)hash, file[0] ? file : "-");

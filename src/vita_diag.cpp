@@ -299,7 +299,7 @@ extern "C" int vitaDiagPerfAppend(char *buf, int cap)
                              used, byType[0], byType[1], byType[2], byType[3], byType[4], byType[5]);
         if (nextThreshold < 4 && used >= kThresholds[nextThreshold]) {
             ++nextThreshold;
-            FILE *f = std::fopen(VITA_GAME_ROOT "fd_table.log", "a");
+            FILE *f = std::fopen(VITA_LOG_ROOT "fd_table.log", "a");
             if (f) {
                 std::fprintf(f, "===== FD_TABLE used=%u t_s=%u =====\n", used,
                              (unsigned)(sceKernelGetProcessTimeWide() / 1000000));
@@ -433,8 +433,8 @@ static void resetPhase(int phase)
 
 static void flushPhase()
 {
-    const char *path = gPhase == PH_BOOT ? VITA_GAME_ROOT "boot_timeline.log"
-                                         : VITA_GAME_ROOT "battle_timeline.log";
+    const char *path = gPhase == PH_BOOT ? VITA_LOG_ROOT "boot_timeline.log"
+                                         : VITA_LOG_ROOT "battle_timeline.log";
     std::sort(gEntries, gEntries + gNEntries, [](const Entry &a, const Entry &b) { return a.t0 < b.t0; });
     std::sort(gAgg, gAgg + gNAgg, [](const Agg &a, const Agg &b) { return a.us > b.us; });
     FILE *f = std::fopen(path, "a");
@@ -1076,7 +1076,7 @@ static bool slowFramesNearlyFull() { return gSlowLen > (int)sizeof(gSlowBuf) * 3
 static void slowFramesFlush()
 {
     if (!gSlowLen) return;
-    FILE *f = std::fopen(VITA_GAME_ROOT "slow_frames.log", "a");
+    FILE *f = std::fopen(VITA_LOG_ROOT "slow_frames.log", "a");
     if (f) { std::fwrite(gSlowBuf, 1, (size_t)gSlowLen, f); std::fclose(f); }
     gSlowLen = 0;
 }

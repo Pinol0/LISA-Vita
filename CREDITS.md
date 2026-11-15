@@ -8,7 +8,8 @@
 - [LZ4](https://github.com/lz4/lz4) by Yann Collet
 - [PSVshell](https://github.com/Electry/PSVshell) by Electry (recommended overclock)
 
-LISA: The Painful is by Dingaling Productions. This project is not affiliated with its
+LISA: The Painful and LISA: The Joyful are by Dingaling Productions. The LiveArea backgrounds are
+cropped from the official Definitive Edition key art (Dingaling Productions / Serenity Forge). This project is not affiliated with its
 developers or publishers, and no game files are distributed with it.
 
 Licenses of the third-party components: [THIRD_PARTY.md](THIRD_PARTY.md).
